@@ -6,11 +6,13 @@ pub struct Config {
     timeout: std::time::Duration,
     buffer_size: u32,
     bpf: Option<String>,
-    retry_after: std::time::Duration
+    retry_after: std::time::Duration,
 }
 
 impl Config {
-    pub fn max_packets_read(&self) -> usize { self.max_packets_read }
+    pub fn max_packets_read(&self) -> usize {
+        self.max_packets_read
+    }
 
     pub fn with_max_packets_read(&mut self, amt: usize) -> &mut Self {
         self.max_packets_read = amt;
@@ -53,7 +55,9 @@ impl Config {
         self
     }
 
-    pub fn retry_after(&self) -> &std::time::Duration { &self.retry_after }
+    pub fn retry_after(&self) -> &std::time::Duration {
+        &self.retry_after
+    }
 
     pub fn with_retry_after(&mut self, amt: std::time::Duration) -> &mut Self {
         self.retry_after = amt;
@@ -74,7 +78,7 @@ impl Config {
             timeout,
             buffer_size,
             bpf,
-            retry_after
+            retry_after,
         }
     }
 }
@@ -87,7 +91,7 @@ impl Default for Config {
             timeout: std::time::Duration::from_millis(100),
             buffer_size: 16777216,
             bpf: None,
-            retry_after: std::time::Duration::from_millis(100)
+            retry_after: std::time::Duration::from_millis(100),
         }
     }
 }

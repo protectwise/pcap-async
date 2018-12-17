@@ -1,5 +1,5 @@
 use crate::{
-    errors::Error,
+    errors::PcapError,
     Config,
     Handle,
     pcap_util
@@ -33,7 +33,7 @@ impl PacketStream {
         handle: Handle,
         timer_handle: TimerHandle,
         term: std::sync::Arc<std::sync::atomic::AtomicBool>
-    ) -> Result<impl Stream<Item=Vec<Packet>>, Error> {
+    ) -> Result<impl Stream<Item=Vec<Packet>>, PcapError> {
         let live_capture = handle.is_live_capture();
 
         let handle_ptr = handle.handle();
@@ -100,17 +100,17 @@ mod tests {
     use std::path::PathBuf;
 
     async fn get_packets(provider: PacketProvider) -> usize {
-    let mut provider = provider;
-    let mut agg = 0;
-    loop {
-        if let Some(p) = await!(provider.next_packets()) {
-            agg += p.len();
-        } else {
-            break;
+        let mut provider = provider;
+        let mut agg = 0;
+        loop {
+            if let Some(p) = await!(provider.next_packets()) {
+                agg += p.len();
+            } else {
+                break;
+            }
         }
+        agg
     }
-    agg
-}
 
     #[test]
     fn packets_from_file() {

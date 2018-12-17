@@ -1,24 +1,8 @@
-use crate::{
-    dispatch_callback,
-    errors::Error,
-    pcap_util,
-    Config,
-    Handle,
-    Packet
-};
-use futures::{
-    compat::Future01CompatExt,
-    stream::StreamExt,
-    future::FutureExt,
-    Future
-};
+use crate::{dispatch_callback, errors::PcapError, pcap_util, Config, Handle, Packet};
+use futures::{compat::Future01CompatExt, future::FutureExt, stream::StreamExt, Future};
 use log::*;
 use pin_utils::pin_mut;
-use std::{
-    self,
-    pin::Pin,
-    task::Poll
-};
+use std::{self, pin::Pin, task::Poll};
 use tokio_timer::timer::Handle as TimerHandle;
 
 pub struct PacketProvider {
@@ -26,7 +10,7 @@ pub struct PacketProvider {
     timer_handle: TimerHandle,
     max_packets_read: usize,
     retry_after: std::time::Duration,
-    live_capture: bool
+    live_capture: bool,
 }
 
 async fn next_packets(
@@ -35,7 +19,7 @@ async fn next_packets(
     delay: std::time::Duration,
     max_packets_read: usize,
     packets: Vec<Packet>,
-    live_capture: bool
+    live_capture: bool,
 ) -> Option<Vec<Packet>> {
     let mut packets = packets;
     loop {
@@ -63,12 +47,10 @@ async fn next_packets(
             0 => {
                 if !packets.is_empty() {
                     if !live_capture {
-                        unsafe {
-                            pcap_sys::pcap_breakloop(pcap_handle.clone().as_ptr())
-                        }
+                        unsafe { pcap_sys::pcap_breakloop(pcap_handle.clone().as_ptr()) }
                     }
                     trace!("Capture loop breaking with {} packets", packets.len());
-                    return Some(packets)
+                    return Some(packets);
                 } else {
                     debug!("No packets read, delaying to retry");
 
@@ -94,15 +76,22 @@ async fn next_packets(
 }
 
 impl PacketProvider {
-    pub fn next_packets(&mut self) -> impl std::future::Future<Output=Option<Vec<Packet>>> {
-        next_packets(self.pcap_handle.clone(), self.timer_handle.clone(), self.retry_after.clone(), self.max_packets_read,vec![], self.live_capture)
+    pub fn next_packets(&mut self) -> impl std::future::Future<Output = Option<Vec<Packet>>> {
+        next_packets(
+            self.pcap_handle.clone(),
+            self.timer_handle.clone(),
+            self.retry_after.clone(),
+            self.max_packets_read,
+            vec![],
+            self.live_capture,
+        )
     }
 
     pub fn new(
         config: &Config,
         handle: Handle,
-        timer_handle: TimerHandle
-    ) -> Result<PacketProvider, Error> {
+        timer_handle: TimerHandle,
+    ) -> Result<PacketProvider, PcapError> {
         let live_capture = handle.is_live_capture();
 
         let handle_ptr = handle.handle();
@@ -128,13 +117,11 @@ impl PacketProvider {
         }?;
 
         Ok(PacketProvider {
-            pcap_handle: unsafe {
-                std::ptr::Unique::new_unchecked(activated)
-            },
+            pcap_handle: unsafe { std::ptr::Unique::new_unchecked(activated) },
             timer_handle: timer_handle,
             max_packets_read: config.max_packets_read(),
             retry_after: config.retry_after().clone(),
-            live_capture: live_capture
+            live_capture: live_capture,
         })
     }
 
@@ -162,10 +149,7 @@ mod tests {
     use self::test::Bencher;
 
     use super::*;
-    use futures::{
-        Future,
-        Stream
-    };
+    use futures::{Future, Stream};
     use std::path::PathBuf;
 
     async fn get_packets(provider: PacketProvider) -> usize {
@@ -201,8 +185,11 @@ mod tests {
             let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
                 .expect("No handle created");
 
-            let packet_provider = PacketProvider::new(&Config::default(), handle, h).expect("Failed to build");
-            let fut_packets: std::pin::Pin<Box<std::future::Future<Output=usize> + Send>> = get_packets(packet_provider).boxed();
+            let packet_provider =
+                PacketProvider::new(&Config::default(), handle, h).expect("Failed to build");
+            let fut_packets: std::pin::Pin<
+                Box<std::future::Future<Output = usize> + Send>,
+            > = get_packets(packet_provider).boxed();
             let packets = futures::executor::block_on(fut_packets);
 
             interrupt_clone.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -211,7 +198,8 @@ mod tests {
         });
 
         while !interrupt.load(std::sync::atomic::Ordering::Relaxed) {
-            t.turn(Some(std::time::Duration::from_secs(1))).expect("Failed to turn");
+            t.turn(Some(std::time::Duration::from_secs(1)))
+                .expect("Failed to turn");
         }
 
         let packets = packets_thread.join().expect("Failed to join");
@@ -263,7 +251,8 @@ mod tests {
                 let mut cfg = Config::default();
                 cfg.with_max_packets_read(5000);
 
-                let packet_provider = PacketProvider::new(&cfg, handle, timer_handle).expect("Failed to build");
+                let packet_provider =
+                    PacketProvider::new(&cfg, handle, timer_handle).expect("Failed to build");
                 let fut_packets = get_packets(packet_provider);
                 let packets = futures::executor::block_on(fut_packets);
 
@@ -273,7 +262,8 @@ mod tests {
             });
 
             while !interrupt.load(std::sync::atomic::Ordering::Relaxed) {
-                t.turn(Some(std::time::Duration::from_micros(1))).expect("Failed to turn");
+                t.turn(Some(std::time::Duration::from_micros(1)))
+                    .expect("Failed to turn");
             }
 
             let packets = packets_thread.join().expect("Failed to join");

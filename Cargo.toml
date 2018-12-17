@@ -5,7 +5,8 @@ authors = ["Danny Browning <danny.browning@protectwise.com>"]
 edition = "2018"
 
 [dependencies]
-error-chain = "~0.12"
+failure = "~0.1"
+failure_derive = "~0.1"
 futures-preview = { version ="0.3.0-alpha.10", features = ["compat"] }
 libc = "~0.2"
 log = "~0.4"
