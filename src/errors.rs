@@ -1,7 +1,7 @@
-use failure::{err_msg, Error, Fail};
+use failure::{err_msg, Fail};
 
 #[derive(Debug, Fail)]
-pub enum PcapError {
+pub enum Error {
     #[fail(display = "IO Error")]
     Io(#[fail(cause)] std::io::Error),
     #[fail(display = "Null pointer when dealing with ffi")]
@@ -23,12 +23,15 @@ pub enum PcapError {
     LiveCapture {
         iface: String,
         #[fail(cause)]
-        error: Error,
+        error: failure::Error,
     },
     #[fail(display = "Failed to create file capture for file {}", file)]
     FileCapture {
         file: String,
         #[fail(cause)]
-        error: Error,
+        error: failure::Error,
     },
 }
+
+unsafe impl Sync for Error {}
+unsafe impl Send for Error {}

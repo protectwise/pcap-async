@@ -1,4 +1,4 @@
-use crate::{dispatch_callback, errors::PcapError, pcap_util, Config, Handle, Packet};
+use crate::{dispatch_callback, errors::Error, pcap_util, Config, Handle, Packet};
 use futures::{compat::Future01CompatExt, future::FutureExt, stream::StreamExt, Future};
 use log::*;
 use pin_utils::pin_mut;
@@ -91,7 +91,7 @@ impl PacketProvider {
         config: &Config,
         handle: Handle,
         timer_handle: TimerHandle,
-    ) -> Result<PacketProvider, PcapError> {
+    ) -> Result<PacketProvider, Error> {
         let live_capture = handle.is_live_capture();
 
         let handle_ptr = handle.handle();

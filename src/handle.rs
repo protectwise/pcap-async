@@ -1,4 +1,4 @@
-use crate::{errors::PcapError, pcap_util};
+use crate::{errors::Error, pcap_util};
 use log::*;
 use std;
 
@@ -16,17 +16,17 @@ impl Handle {
         self.handle
     }
 
-    pub fn live_capture(iface: &str) -> Result<Handle, PcapError> {
-        let device_str = std::ffi::CString::new(iface).map_err(|e| PcapError::Ffi(e))?;
+    pub fn live_capture(iface: &str) -> Result<Handle, Error> {
+        let device_str = std::ffi::CString::new(iface).map_err(Error::Ffi)?;
 
         let errbuf = ([0i8; 256]).as_mut_ptr();
         let h = unsafe { pcap_sys::pcap_create(device_str.as_ptr(), errbuf) };
         let r = if h.is_null() {
             pcap_util::cstr_to_string(errbuf).and_then(|msg| {
                 error!("Failed to create live stream: {}", msg);
-                Err(PcapError::LiveCapture {
+                Err(Error::LiveCapture {
                     iface: iface.to_string(),
-                    error: PcapError::LibPcapError { msg: msg }.into(),
+                    error: Error::LibPcapError { msg: msg }.into(),
                 })
             })
         } else {
@@ -41,17 +41,17 @@ impl Handle {
         r
     }
 
-    pub fn file_capture(path: &str) -> Result<Handle, PcapError> {
-        let device_str = std::ffi::CString::new(path).map_err(|e| PcapError::Ffi(e))?;
+    pub fn file_capture(path: &str) -> Result<Handle, Error> {
+        let device_str = std::ffi::CString::new(path).map_err(Error::Ffi)?;
 
         let errbuf = ([0i8; 256]).as_mut_ptr();
         let h = unsafe { pcap_sys::pcap_open_offline(device_str.as_ptr(), errbuf) };
         let r = if h.is_null() {
             pcap_util::cstr_to_string(errbuf).and_then(|msg| {
                 error!("Failed to create file stream: {}", msg);
-                Err(PcapError::FileCapture {
+                Err(Error::FileCapture {
                     file: path.to_string(),
-                    error: PcapError::LibPcapError { msg: msg }.into(),
+                    error: Error::LibPcapError { msg: msg }.into(),
                 })
             })
         } else {
@@ -66,12 +66,12 @@ impl Handle {
         r
     }
 
-    pub fn lookup() -> Result<Handle, PcapError> {
+    pub fn lookup() -> Result<Handle, Error> {
         let errbuf = ([0i8; 256]).as_mut_ptr();
         let dev = unsafe { pcap_sys::pcap_lookupdev(errbuf) };
         let res = if dev.is_null() {
             pcap_util::cstr_to_string(errbuf as _)
-                .and_then(|msg| Err(PcapError::LibPcapError { msg: msg }))
+                .and_then(|msg| Err(Error::LibPcapError { msg: msg }))
         } else {
             pcap_util::cstr_to_string(dev as _).and_then(|s| {
                 debug!("Lookup found interface {}", s);
@@ -84,12 +84,12 @@ impl Handle {
 
     pub fn set_non_block(
         handle: *mut pcap_sys::pcap_t,
-    ) -> Result<*mut pcap_sys::pcap_t, PcapError> {
+    ) -> Result<*mut pcap_sys::pcap_t, Error> {
         let errbuf = ([0i8; 256]).as_mut_ptr();
         if -1 == unsafe { pcap_sys::pcap_setnonblock(handle, 1, errbuf) } {
             pcap_util::cstr_to_string(errbuf as _).and_then(|msg| {
                 error!("Failed to set non block: {}", msg);
-                Err(PcapError::LibPcapError { msg: msg })
+                Err(Error::LibPcapError { msg: msg })
             })
         } else {
             Ok(handle)
@@ -98,7 +98,7 @@ impl Handle {
 
     pub fn set_promiscuous(
         handle: *mut pcap_sys::pcap_t,
-    ) -> Result<*mut pcap_sys::pcap_t, PcapError> {
+    ) -> Result<*mut pcap_sys::pcap_t, Error> {
         if 0 != unsafe { pcap_sys::pcap_set_promisc(handle, 1) } {
             Err(pcap_util::convert_libpcap_error(handle))
         } else {
@@ -109,7 +109,7 @@ impl Handle {
     pub fn set_snaplen(
         handle: *mut pcap_sys::pcap_t,
         snaplen: u32,
-    ) -> Result<*mut pcap_sys::pcap_t, PcapError> {
+    ) -> Result<*mut pcap_sys::pcap_t, Error> {
         if 0 != unsafe { pcap_sys::pcap_set_snaplen(handle, snaplen as _) } {
             Err(pcap_util::convert_libpcap_error(handle))
         } else {
@@ -120,7 +120,7 @@ impl Handle {
     pub fn set_timeout(
         handle: *mut pcap_sys::pcap_t,
         dur: &std::time::Duration,
-    ) -> Result<*mut pcap_sys::pcap_t, PcapError> {
+    ) -> Result<*mut pcap_sys::pcap_t, Error> {
         if 0 != unsafe { pcap_sys::pcap_set_timeout(handle, dur.as_millis() as _) } {
             Err(pcap_util::convert_libpcap_error(handle))
         } else {
@@ -131,7 +131,7 @@ impl Handle {
     pub fn set_buffer_size(
         handle: *mut pcap_sys::pcap_t,
         buffer_size: u32,
-    ) -> Result<*mut pcap_sys::pcap_t, PcapError> {
+    ) -> Result<*mut pcap_sys::pcap_t, Error> {
         if 0 != unsafe { pcap_sys::pcap_set_buffer_size(handle, buffer_size as _) } {
             Err(pcap_util::convert_libpcap_error(handle))
         } else {
@@ -142,13 +142,13 @@ impl Handle {
     pub fn set_bpf(
         handle: *mut pcap_sys::pcap_t,
         bpf: &String,
-    ) -> Result<*mut pcap_sys::pcap_t, PcapError> {
+    ) -> Result<*mut pcap_sys::pcap_t, Error> {
         let mut bpf_program = pcap_sys::bpf_program {
             bf_len: 0,
             bf_insns: std::ptr::null_mut(),
         };
 
-        let bpf_str = std::ffi::CString::new(bpf.to_string()).map_err(PcapError::Ffi)?;
+        let bpf_str = std::ffi::CString::new(bpf.to_string()).map_err(Error::Ffi)?;
 
         if 0 != unsafe {
             pcap_sys::pcap_compile(
