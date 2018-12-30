@@ -1,10 +1,8 @@
 #![allow(dead_code, unused_imports)]
 #![feature(
-    duration_as_u128,
     ptr_internals,
     test,
     futures_api,
-    pin,
     async_await,
     await_macro
 )]

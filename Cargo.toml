@@ -7,11 +7,11 @@ edition = "2018"
 [dependencies]
 failure = "~0.1"
 failure_derive = "~0.1"
-futures-preview = { version ="0.3.0-alpha.10", features = ["compat"] }
+futures-preview = { version ="0.3.0-alpha.11", features = ["compat"] }
 libc = "~0.2"
 log = "~0.4"
 pcap-sys = { git = "https://github.com/protectwise/pcap-sys.git" }
-pin-utils = "0.1.0-alpha.3"
+pin-utils = "0.1.0-alpha.4"
 tokio-timer = "~0.2"
 
 [dev-dependencies]
