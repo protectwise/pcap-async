@@ -1,7 +1,6 @@
 use crate::{dispatch_callback, errors::Error, pcap_util, Config, Handle, Packet};
 use futures::{compat::Future01CompatExt, future::FutureExt, stream::StreamExt, Future};
 use log::*;
-use pin_utils::pin_mut;
 use std::{self, pin::Pin, task::Poll};
 use tokio_timer::timer::Handle as TimerHandle;
 
