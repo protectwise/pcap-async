@@ -16,10 +16,7 @@ pub enum Error {
     CreatePacketHeader,
     #[fail(display = "Libpcap encountered an error: {}", msg)]
     LibPcapError { msg: String },
-    #[fail(
-        display = "Failed to create live capture for interface {}",
-        iface
-    )]
+    #[fail(display = "Failed to create live capture for interface {}", iface)]
     LiveCapture {
         iface: String,
         #[fail(cause)]

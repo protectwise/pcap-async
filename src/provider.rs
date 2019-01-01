@@ -186,9 +186,8 @@ mod tests {
 
             let packet_provider =
                 PacketProvider::new(&Config::default(), handle, h).expect("Failed to build");
-            let fut_packets: std::pin::Pin<
-                Box<std::future::Future<Output = usize> + Send>,
-            > = get_packets(packet_provider).boxed();
+            let fut_packets: std::pin::Pin<Box<std::future::Future<Output = usize> + Send>> =
+                get_packets(packet_provider).boxed();
             let packets = futures::executor::block_on(fut_packets);
 
             interrupt_clone.store(true, std::sync::atomic::Ordering::Relaxed);

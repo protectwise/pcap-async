@@ -82,9 +82,7 @@ impl Handle {
         res
     }
 
-    pub fn set_non_block(
-        handle: *mut pcap_sys::pcap_t,
-    ) -> Result<*mut pcap_sys::pcap_t, Error> {
+    pub fn set_non_block(handle: *mut pcap_sys::pcap_t) -> Result<*mut pcap_sys::pcap_t, Error> {
         let errbuf = ([0i8; 256]).as_mut_ptr();
         if -1 == unsafe { pcap_sys::pcap_setnonblock(handle, 1, errbuf) } {
             pcap_util::cstr_to_string(errbuf as _).and_then(|msg| {
@@ -96,9 +94,7 @@ impl Handle {
         }
     }
 
-    pub fn set_promiscuous(
-        handle: *mut pcap_sys::pcap_t,
-    ) -> Result<*mut pcap_sys::pcap_t, Error> {
+    pub fn set_promiscuous(handle: *mut pcap_sys::pcap_t) -> Result<*mut pcap_sys::pcap_t, Error> {
         if 0 != unsafe { pcap_sys::pcap_set_promisc(handle, 1) } {
             Err(pcap_util::convert_libpcap_error(handle))
         } else {

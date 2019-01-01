@@ -1,11 +1,5 @@
 #![allow(dead_code, unused_imports)]
-#![feature(
-    ptr_internals,
-    test,
-    futures_api,
-    async_await,
-    await_macro
-)]
+#![feature(ptr_internals, test, futures_api, async_await, await_macro)]
 
 pub mod config;
 pub mod errors;
