@@ -123,13 +123,6 @@ impl PacketProvider {
             live_capture: live_capture,
         })
     }
-
-    pub fn interrupt(&self) {
-        let h = self.pcap_handle.clone().as_ptr();
-        unsafe {
-            pcap_sys::pcap_breakloop(h);
-        }
-    }
 }
 
 impl Drop for PacketProvider {

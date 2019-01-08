@@ -11,13 +11,7 @@ use log::*;
 use std::{self, pin::Pin, task::Poll};
 use tokio_timer::timer::Handle as TimerHandle;
 
-pub struct PacketStream {
-    pcap_handle: std::ptr::Unique<pcap_sys::pcap_t>,
-    timer_handle: TimerHandle,
-    max_packets_read: usize,
-    retry_after: std::time::Duration,
-    live_capture: bool,
-}
+pub struct PacketStream {}
 
 impl PacketStream {
     pub fn new(
@@ -66,22 +60,6 @@ impl PacketStream {
             .take_while(|v| futures::future::ready(v.is_some()))
             .filter_map(|v| futures::future::ready(v));
         Ok(stream)
-    }
-
-    pub fn interrupt(&self) {
-        let h = self.pcap_handle.clone().as_ptr();
-        unsafe {
-            pcap_sys::pcap_breakloop(h);
-        }
-    }
-}
-
-impl Drop for PacketStream {
-    fn drop(&mut self) {
-        let h = self.pcap_handle.clone().as_ptr();
-        unsafe {
-            pcap_sys::pcap_close(h);
-        }
     }
 }
 

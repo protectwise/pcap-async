@@ -2,6 +2,7 @@ use crate::{errors::Error, pcap_util};
 use log::*;
 use std;
 
+#[derive(Clone)]
 pub struct Handle {
     handle: std::ptr::Unique<pcap_sys::pcap_t>,
     live_capture: bool,
@@ -166,6 +167,22 @@ impl Handle {
             return Err(pcap_util::convert_libpcap_error(handle));
         }
         Ok(handle)
+    }
+
+    pub fn interrupt(&self) {
+        let h = self.handle.clone().as_ptr();
+        unsafe {
+            pcap_sys::pcap_breakloop(h);
+        }
+    }
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        let h = self.handle.clone().as_ptr();
+        unsafe {
+            pcap_sys::pcap_close(h);
+        }
     }
 }
 

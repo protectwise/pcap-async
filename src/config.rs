@@ -1,5 +1,6 @@
 use std;
 
+#[derive(Clone, Debug)]
 pub struct Config {
     max_packets_read: usize,
     snaplen: u32,
