@@ -1,22 +1,14 @@
-use crate::{
-    errors::PcapError,
-    Config,
-    Handle,
-    pcap_util
-};
-use futures::{
-    compat::Future01CompatExt,
-    stream::StreamExt,
-    future::FutureExt,
-    Future
-};
+use crate::config::Config;
+use crate::errors::Error;
+use crate::handle::Handle;
+use crate::packet::Packet;
+use crate::pcap_util;
+
+use futures::compat::Future01CompatExt;
+use futures::stream::{Stream, StreamExt};
+use futures::{Future, FutureExt};
 use log::*;
-use pin_utils::pin_mut;
-use std::{
-    self,
-    pin::Pin,
-    task::Poll
-};
+use std::{self, pin::Pin, task::Poll};
 use tokio_timer::timer::Handle as TimerHandle;
 
 pub struct PacketStream {
@@ -24,7 +16,7 @@ pub struct PacketStream {
     timer_handle: TimerHandle,
     max_packets_read: usize,
     retry_after: std::time::Duration,
-    live_capture: bool
+    live_capture: bool,
 }
 
 impl PacketStream {
@@ -32,8 +24,7 @@ impl PacketStream {
         config: &Config,
         handle: Handle,
         timer_handle: TimerHandle,
-        term: std::sync::Arc<std::sync::atomic::AtomicBool>
-    ) -> Result<impl Stream<Item=Vec<Packet>>, PcapError> {
+    ) -> Result<impl Stream<Item = Vec<Packet>>, Error> {
         let live_capture = handle.is_live_capture();
 
         let handle_ptr = handle.handle();
@@ -58,14 +49,22 @@ impl PacketStream {
             })
         }?;
 
-        let pcap_handle = unsafe {
-            std::ptr::Unique::new_unchecked(activated)
-        };
+        let pcap_handle = unsafe { std::ptr::Unique::new_unchecked(activated) };
         let max_packets_read = config.max_packets_read();
         let retry_after = config.retry_after().clone();
-        let stream = futures::stream::poll_fn(move || {
-            next_packets()
-        });
+        let stream = futures::stream::repeat(())
+            .then(move |_| {
+                crate::next_packets(
+                    pcap_handle.clone(),
+                    timer_handle.clone(),
+                    retry_after.clone(),
+                    max_packets_read,
+                    vec![],
+                    live_capture,
+                )
+            })
+            .take_while(|v| futures::future::ready(v.is_some()))
+            .filter_map(|v| futures::future::ready(v));
         Ok(stream)
     }
 
@@ -93,24 +92,8 @@ mod tests {
     use self::test::Bencher;
 
     use super::*;
-    use futures::{
-        Future,
-        Stream
-    };
+    use futures::{Future, Stream};
     use std::path::PathBuf;
-
-    async fn get_packets(provider: PacketProvider) -> usize {
-        let mut provider = provider;
-        let mut agg = 0;
-        loop {
-            if let Some(p) = await!(provider.next_packets()) {
-                agg += p.len();
-            } else {
-                break;
-            }
-        }
-        agg
-    }
 
     #[test]
     fn packets_from_file() {
@@ -132,9 +115,13 @@ mod tests {
             let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
                 .expect("No handle created");
 
-            let packet_provider = PacketProvider::new(&Config::default(), handle, h).expect("Failed to build");
-            let fut_packets: std::pin::Pin<Box<std::future::Future<Output=usize> + Send>> = get_packets(packet_provider).boxed();
-            let packets = futures::executor::block_on(fut_packets);
+            let packet_provider =
+                PacketStream::new(&Config::default(), handle, h).expect("Failed to build");
+            let fut_packets = packet_provider.collect::<Vec<_>>();
+            let packets = futures::executor::block_on(fut_packets)
+                .iter()
+                .flatten()
+                .count();
 
             interrupt_clone.store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -142,7 +129,8 @@ mod tests {
         });
 
         while !interrupt.load(std::sync::atomic::Ordering::Relaxed) {
-            t.turn(Some(std::time::Duration::from_secs(1))).expect("Failed to turn");
+            t.turn(Some(std::time::Duration::from_secs(1)))
+                .expect("Failed to turn");
         }
 
         let packets = packets_thread.join().expect("Failed to join");
@@ -159,7 +147,7 @@ mod tests {
 
         let handle = Handle::lookup().expect("No handle created");
 
-        let stream = PacketProvider::new(&Config::default(), handle, h);
+        let stream = PacketStream::new(&Config::default(), handle, h);
 
         assert!(
             stream.is_ok(),
@@ -194,9 +182,13 @@ mod tests {
                 let mut cfg = Config::default();
                 cfg.with_max_packets_read(5000);
 
-                let packet_provider = PacketProvider::new(&cfg, handle, timer_handle).expect("Failed to build");
-                let fut_packets = get_packets(packet_provider);
-                let packets = futures::executor::block_on(fut_packets);
+                let packet_provider = PacketStream::new(&Config::default(), handle, timer_handle)
+                    .expect("Failed to build");
+                let fut_packets = packet_provider.collect::<Vec<_>>();
+                let packets = futures::executor::block_on(fut_packets)
+                    .iter()
+                    .flatten()
+                    .count();
 
                 interrupt_clone.store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -204,7 +196,8 @@ mod tests {
             });
 
             while !interrupt.load(std::sync::atomic::Ordering::Relaxed) {
-                t.turn(Some(std::time::Duration::from_micros(1))).expect("Failed to turn");
+                t.turn(Some(std::time::Duration::from_micros(1)))
+                    .expect("Failed to turn");
             }
 
             let packets = packets_thread.join().expect("Failed to join");

@@ -7,6 +7,7 @@ pub mod handle;
 pub mod packet;
 pub mod pcap_util;
 pub mod provider;
+pub mod stream;
 
 pub use crate::{config::Config, handle::Handle, packet::Packet, provider::PacketProvider};
 use futures::compat::Future01CompatExt;
