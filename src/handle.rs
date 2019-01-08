@@ -4,20 +4,19 @@ use std;
 
 #[derive(Clone)]
 pub struct Handle {
-    handle: std::ptr::Unique<pcap_sys::pcap_t>,
+    handle: *mut pcap_sys::pcap_t,
     live_capture: bool,
 }
+
+unsafe impl Send for Handle {}
+unsafe impl Sync for Handle {}
 
 impl Handle {
     pub fn is_live_capture(&self) -> bool {
         self.live_capture
     }
 
-    pub fn handle(self) -> std::ptr::Unique<pcap_sys::pcap_t> {
-        self.handle
-    }
-
-    pub fn live_capture(iface: &str) -> Result<Handle, Error> {
+    pub fn live_capture(iface: &str) -> Result<std::sync::Arc<Handle>, Error> {
         let device_str = std::ffi::CString::new(iface).map_err(Error::Ffi)?;
 
         let errbuf = ([0i8; 256]).as_mut_ptr();
@@ -32,17 +31,17 @@ impl Handle {
             })
         } else {
             info!("Live stream created for interface {}", iface);
-            let handle = unsafe { std::ptr::Unique::new_unchecked(h) };
-            Ok(Handle {
-                handle: handle,
-                live_capture: true,
-            })
+            let handle = std::sync::Arc::new(Handle {
+                handle: h,
+                live_capture: false,
+            });
+            Ok(handle)
         };
         drop(errbuf);
         r
     }
 
-    pub fn file_capture(path: &str) -> Result<Handle, Error> {
+    pub fn file_capture(path: &str) -> Result<std::sync::Arc<Handle>, Error> {
         let device_str = std::ffi::CString::new(path).map_err(Error::Ffi)?;
 
         let errbuf = ([0i8; 256]).as_mut_ptr();
@@ -57,17 +56,17 @@ impl Handle {
             })
         } else {
             info!("File stream created for file {}", path);
-            let handle = unsafe { std::ptr::Unique::new_unchecked(h) };
-            Ok(Handle {
-                handle: handle,
+            let handle = std::sync::Arc::new(Handle {
+                handle: h,
                 live_capture: false,
-            })
+            });
+            Ok(handle)
         };
         drop(errbuf);
         r
     }
 
-    pub fn lookup() -> Result<Handle, Error> {
+    pub fn lookup() -> Result<std::sync::Arc<Handle>, Error> {
         let errbuf = ([0i8; 256]).as_mut_ptr();
         let dev = unsafe { pcap_sys::pcap_lookupdev(errbuf) };
         let res = if dev.is_null() {
@@ -83,63 +82,63 @@ impl Handle {
         res
     }
 
-    pub fn set_non_block(handle: *mut pcap_sys::pcap_t) -> Result<*mut pcap_sys::pcap_t, Error> {
+    pub fn set_non_block(&self) -> Result<&Self, Error> {
         let errbuf = ([0i8; 256]).as_mut_ptr();
-        if -1 == unsafe { pcap_sys::pcap_setnonblock(handle, 1, errbuf) } {
+        if -1 == unsafe { pcap_sys::pcap_setnonblock(self.handle, 1, errbuf) } {
             pcap_util::cstr_to_string(errbuf as _).and_then(|msg| {
                 error!("Failed to set non block: {}", msg);
                 Err(Error::LibPcapError { msg: msg })
             })
         } else {
-            Ok(handle)
+            Ok(self)
         }
     }
 
-    pub fn set_promiscuous(handle: *mut pcap_sys::pcap_t) -> Result<*mut pcap_sys::pcap_t, Error> {
-        if 0 != unsafe { pcap_sys::pcap_set_promisc(handle, 1) } {
-            Err(pcap_util::convert_libpcap_error(handle))
+    pub fn set_promiscuous(&self) -> Result<&Self, Error> {
+        if 0 != unsafe { pcap_sys::pcap_set_promisc(self.handle, 1) } {
+            Err(pcap_util::convert_libpcap_error(self.handle))
         } else {
-            Ok(handle)
+            Ok(self)
         }
     }
 
     pub fn set_snaplen(
-        handle: *mut pcap_sys::pcap_t,
+        &self,
         snaplen: u32,
-    ) -> Result<*mut pcap_sys::pcap_t, Error> {
-        if 0 != unsafe { pcap_sys::pcap_set_snaplen(handle, snaplen as _) } {
-            Err(pcap_util::convert_libpcap_error(handle))
+    ) -> Result<&Self, Error> {
+        if 0 != unsafe { pcap_sys::pcap_set_snaplen(self.handle, snaplen as _) } {
+            Err(pcap_util::convert_libpcap_error(self.handle))
         } else {
-            Ok(handle)
+            Ok(self)
         }
     }
 
     pub fn set_timeout(
-        handle: *mut pcap_sys::pcap_t,
+        &self,
         dur: &std::time::Duration,
-    ) -> Result<*mut pcap_sys::pcap_t, Error> {
-        if 0 != unsafe { pcap_sys::pcap_set_timeout(handle, dur.as_millis() as _) } {
-            Err(pcap_util::convert_libpcap_error(handle))
+    ) -> Result<&Self, Error> {
+        if 0 != unsafe { pcap_sys::pcap_set_timeout(self.handle, dur.as_millis() as _) } {
+            Err(pcap_util::convert_libpcap_error(self.handle))
         } else {
-            Ok(handle)
+            Ok(self)
         }
     }
 
     pub fn set_buffer_size(
-        handle: *mut pcap_sys::pcap_t,
+        &self,
         buffer_size: u32,
-    ) -> Result<*mut pcap_sys::pcap_t, Error> {
-        if 0 != unsafe { pcap_sys::pcap_set_buffer_size(handle, buffer_size as _) } {
-            Err(pcap_util::convert_libpcap_error(handle))
+    ) -> Result<&Self, Error> {
+        if 0 != unsafe { pcap_sys::pcap_set_buffer_size(self.handle, buffer_size as _) } {
+            Err(pcap_util::convert_libpcap_error(self.handle))
         } else {
-            Ok(handle)
+            Ok(self)
         }
     }
 
     pub fn set_bpf(
-        handle: *mut pcap_sys::pcap_t,
+        &self,
         bpf: &String,
-    ) -> Result<*mut pcap_sys::pcap_t, Error> {
+    ) -> Result<&Self, Error> {
         let mut bpf_program = pcap_sys::bpf_program {
             bf_len: 0,
             bf_insns: std::ptr::null_mut(),
@@ -149,39 +148,51 @@ impl Handle {
 
         if 0 != unsafe {
             pcap_sys::pcap_compile(
-                handle,
+                self.handle,
                 &mut bpf_program,
                 bpf_str.as_ptr(),
                 1,
                 pcap_sys::PCAP_NETMASK_UNKNOWN,
             )
         } {
-            return Err(pcap_util::convert_libpcap_error(handle));
+            return Err(pcap_util::convert_libpcap_error(self.handle));
         }
 
-        let ret_code = unsafe { pcap_sys::pcap_setfilter(handle, &mut bpf_program) };
+        let ret_code = unsafe { pcap_sys::pcap_setfilter(self.handle, &mut bpf_program) };
         unsafe {
             pcap_sys::pcap_freecode(&mut bpf_program);
         }
         if ret_code != 0 {
-            return Err(pcap_util::convert_libpcap_error(handle));
+            return Err(pcap_util::convert_libpcap_error(self.handle));
         }
-        Ok(handle)
+        Ok(self)
+    }
+
+    pub fn activate(
+        &self
+    ) -> Result<&Self, Error> {
+        if 0 != unsafe { pcap_sys::pcap_activate(self.handle) } {
+            Err(pcap_util::convert_libpcap_error(self.handle))
+        } else {
+            Ok(self)
+        }
+    }
+
+    pub fn as_mut_ptr(&self) -> *mut pcap_sys::pcap_t {
+        self.handle
     }
 
     pub fn interrupt(&self) {
-        let h = self.handle.clone().as_ptr();
         unsafe {
-            pcap_sys::pcap_breakloop(h);
+            pcap_sys::pcap_breakloop(self.handle);
         }
     }
 }
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        let h = self.handle.clone().as_ptr();
         unsafe {
-            pcap_sys::pcap_close(h);
+            pcap_sys::pcap_close(self.handle);
         }
     }
 }

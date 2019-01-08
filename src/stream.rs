@@ -15,41 +15,32 @@ pub struct PacketStream {}
 
 impl PacketStream {
     pub fn new(
-        config: &Config,
-        handle: Handle,
+        config: Config,
+        handle: std::sync::Arc<Handle>,
         timer_handle: TimerHandle,
     ) -> Result<impl Stream<Item = Vec<Packet>>, Error> {
         let live_capture = handle.is_live_capture();
 
-        let handle_ptr = handle.handle();
+        if live_capture {
+            let configured = handle.set_snaplen(config.snaplen())?
+                .set_non_block()?
+                .set_promiscuous()?
+                .set_timeout(config.timeout())?
+                .set_buffer_size(config.buffer_size())?
+                .activate()?;
 
-        let activated = if !live_capture {
-            Ok(handle_ptr.as_ptr())
-        } else {
-            let configured = Handle::set_snaplen(handle_ptr.as_ptr(), config.snaplen())
-                .and_then(|h_snap| Handle::set_non_block(h_snap))
-                .and_then(|h_nonblock| Handle::set_promiscuous(h_nonblock))
-                .and_then(|h_prom| Handle::set_timeout(h_prom, config.timeout()))
-                .and_then(|h_time| Handle::set_buffer_size(h_time, config.buffer_size()))?;
+            if let Some(ref s) = config.bpf() {
+                handle.set_bpf(s)?;
+            }
+        }
 
-            let ret_code = unsafe { pcap_sys::pcap_activate(configured) };
-
-            pcap_util::check_libpcap_error(configured, 0 == ret_code).and_then(|_| {
-                if let Some(ref s) = config.bpf() {
-                    Handle::set_bpf(configured, s)
-                } else {
-                    Ok(configured)
-                }
-            })
-        }?;
-
-        let pcap_handle = unsafe { std::ptr::Unique::new_unchecked(activated) };
         let max_packets_read = config.max_packets_read();
         let retry_after = config.retry_after().clone();
+
         let stream = futures::stream::repeat(())
             .then(move |_| {
                 crate::next_packets(
-                    pcap_handle.clone(),
+                    std::sync::Arc::clone(&handle),
                     timer_handle.clone(),
                     retry_after.clone(),
                     max_packets_read,
@@ -94,7 +85,7 @@ mod tests {
                 .expect("No handle created");
 
             let packet_provider =
-                PacketStream::new(&Config::default(), handle, h).expect("Failed to build");
+                PacketStream::new(Config::default(), handle, h).expect("Failed to build");
             let fut_packets = packet_provider.collect::<Vec<_>>();
             let packets = futures::executor::block_on(fut_packets)
                 .iter()
@@ -125,7 +116,7 @@ mod tests {
 
         let handle = Handle::lookup().expect("No handle created");
 
-        let stream = PacketStream::new(&Config::default(), handle, h);
+        let stream = PacketStream::new(Config::default(), handle, h);
 
         assert!(
             stream.is_ok(),
@@ -160,7 +151,7 @@ mod tests {
                 let mut cfg = Config::default();
                 cfg.with_max_packets_read(5000);
 
-                let packet_provider = PacketStream::new(&Config::default(), handle, timer_handle)
+                let packet_provider = PacketStream::new(Config::default(), handle, timer_handle)
                     .expect("Failed to build");
                 let fut_packets = packet_provider.collect::<Vec<_>>();
                 let packets = futures::executor::block_on(fut_packets)

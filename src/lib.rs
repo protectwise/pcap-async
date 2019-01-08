@@ -38,7 +38,7 @@ extern "C" fn dispatch_callback(
 }
 
 async fn next_packets(
-    pcap_handle: std::ptr::Unique<pcap_sys::pcap_t>,
+    pcap_handle: std::sync::Arc<Handle>,
     timer_handle: TimerHandle,
     delay: std::time::Duration,
     max_packets_read: usize,
@@ -49,7 +49,7 @@ async fn next_packets(
     loop {
         let ret_code = unsafe {
             pcap_sys::pcap_dispatch(
-                pcap_handle.clone().as_ptr(),
+                std::sync::Arc::new(&pcap_handle).as_mut_ptr(),
                 -1,
                 Some(dispatch_callback),
                 &mut packets as *mut Vec<Packet> as *mut u8,
@@ -64,14 +64,14 @@ async fn next_packets(
                 return None;
             }
             -1 => {
-                let err = pcap_util::convert_libpcap_error(pcap_handle.clone().as_ptr());
+                let err = pcap_util::convert_libpcap_error(pcap_handle.as_mut_ptr());
                 error!("Error encountered when calling pcap_dispatch: {}", err);
                 return None;
             }
             0 => {
                 if !packets.is_empty() {
                     if !live_capture {
-                        unsafe { pcap_sys::pcap_breakloop(pcap_handle.clone().as_ptr()) }
+                        unsafe { pcap_sys::pcap_breakloop(pcap_handle.as_mut_ptr()) }
                     }
                     trace!("Capture loop breaking with {} packets", packets.len());
                     return Some(packets);

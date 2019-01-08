@@ -5,79 +5,17 @@ use std::{self, pin::Pin, task::Poll};
 use tokio_timer::timer::Handle as TimerHandle;
 
 pub struct PacketProvider {
-    pcap_handle: std::ptr::Unique<pcap_sys::pcap_t>,
+    pcap_handle: std::sync::Arc<Handle>,
     timer_handle: TimerHandle,
     max_packets_read: usize,
     retry_after: std::time::Duration,
     live_capture: bool,
 }
 
-async fn next_packets(
-    pcap_handle: std::ptr::Unique<pcap_sys::pcap_t>,
-    timer_handle: TimerHandle,
-    delay: std::time::Duration,
-    max_packets_read: usize,
-    packets: Vec<Packet>,
-    live_capture: bool,
-) -> Option<Vec<Packet>> {
-    let mut packets = packets;
-    loop {
-        let ret_code = unsafe {
-            pcap_sys::pcap_dispatch(
-                pcap_handle.clone().as_ptr(),
-                -1,
-                Some(dispatch_callback),
-                &mut packets as *mut Vec<Packet> as *mut u8,
-            )
-        };
-
-        debug!("Dispatch returned {}", ret_code);
-
-        match ret_code {
-            -2 => {
-                debug!("Pcap breakloop invoked");
-                return None;
-            }
-            -1 => {
-                let err = pcap_util::convert_libpcap_error(pcap_handle.clone().as_ptr());
-                error!("Error encountered when calling pcap_dispatch: {}", err);
-                return None;
-            }
-            0 => {
-                if !packets.is_empty() {
-                    if !live_capture {
-                        unsafe { pcap_sys::pcap_breakloop(pcap_handle.clone().as_ptr()) }
-                    }
-                    trace!("Capture loop breaking with {} packets", packets.len());
-                    return Some(packets);
-                } else {
-                    debug!("No packets read, delaying to retry");
-
-                    let f = timer_handle
-                        .delay(std::time::Instant::now() + delay)
-                        .compat();
-                    if let Err(e) = await!(f) {
-                        error!("Failed to delay: {:?}", e);
-                    }
-                }
-            }
-            _ => {
-                trace!(
-                    "Pcap dispatch returned, after processing {} packets",
-                    ret_code
-                );
-                if packets.len() >= max_packets_read {
-                    return Some(packets);
-                }
-            }
-        }
-    }
-}
-
 impl PacketProvider {
     pub fn next_packets(&mut self) -> impl std::future::Future<Output = Option<Vec<Packet>>> {
-        next_packets(
-            self.pcap_handle.clone(),
+        crate::next_packets(
+            std::sync::Arc::clone(&self.pcap_handle),
             self.timer_handle.clone(),
             self.retry_after.clone(),
             self.max_packets_read,
@@ -87,50 +25,32 @@ impl PacketProvider {
     }
 
     pub fn new(
-        config: &Config,
-        handle: Handle,
+        config: Config,
+        handle: std::sync::Arc<Handle>,
         timer_handle: TimerHandle,
     ) -> Result<PacketProvider, Error> {
         let live_capture = handle.is_live_capture();
 
-        let handle_ptr = handle.handle();
+        if live_capture {
+            let configured = handle.set_snaplen(config.snaplen())?
+                .set_non_block()?
+                .set_promiscuous()?
+                .set_timeout(config.timeout())?
+                .set_buffer_size(config.buffer_size())?
+                .activate()?;
 
-        let activated = if !live_capture {
-            Ok(handle_ptr.as_ptr())
-        } else {
-            let configured = Handle::set_snaplen(handle_ptr.as_ptr(), config.snaplen())
-                .and_then(|h_snap| Handle::set_non_block(h_snap))
-                .and_then(|h_nonblock| Handle::set_promiscuous(h_nonblock))
-                .and_then(|h_prom| Handle::set_timeout(h_prom, config.timeout()))
-                .and_then(|h_time| Handle::set_buffer_size(h_time, config.buffer_size()))?;
-
-            let ret_code = unsafe { pcap_sys::pcap_activate(configured) };
-
-            pcap_util::check_libpcap_error(configured, 0 == ret_code).and_then(|_| {
-                if let Some(ref s) = config.bpf() {
-                    Handle::set_bpf(configured, s)
-                } else {
-                    Ok(configured)
-                }
-            })
-        }?;
+            if let Some(ref s) = config.bpf() {
+                handle.set_bpf(s)?;
+            }
+        }
 
         Ok(PacketProvider {
-            pcap_handle: unsafe { std::ptr::Unique::new_unchecked(activated) },
+            pcap_handle: handle,
             timer_handle: timer_handle,
             max_packets_read: config.max_packets_read(),
             retry_after: config.retry_after().clone(),
             live_capture: live_capture,
         })
-    }
-}
-
-impl Drop for PacketProvider {
-    fn drop(&mut self) {
-        let h = self.pcap_handle.clone().as_ptr();
-        unsafe {
-            pcap_sys::pcap_close(h);
-        }
     }
 }
 
@@ -178,7 +98,7 @@ mod tests {
                 .expect("No handle created");
 
             let packet_provider =
-                PacketProvider::new(&Config::default(), handle, h).expect("Failed to build");
+                PacketProvider::new(Config::default(), handle, h).expect("Failed to build");
             let fut_packets: std::pin::Pin<Box<std::future::Future<Output = usize> + Send>> =
                 get_packets(packet_provider).boxed();
             let packets = futures::executor::block_on(fut_packets);
@@ -207,7 +127,7 @@ mod tests {
 
         let handle = Handle::lookup().expect("No handle created");
 
-        let stream = PacketProvider::new(&Config::default(), handle, h);
+        let stream = PacketProvider::new(Config::default(), handle, h);
 
         assert!(
             stream.is_ok(),
@@ -243,7 +163,7 @@ mod tests {
                 cfg.with_max_packets_read(5000);
 
                 let packet_provider =
-                    PacketProvider::new(&cfg, handle, timer_handle).expect("Failed to build");
+                    PacketProvider::new(cfg.clone(), handle, timer_handle).expect("Failed to build");
                 let fut_packets = get_packets(packet_provider);
                 let packets = futures::executor::block_on(fut_packets);
 
