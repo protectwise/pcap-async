@@ -22,7 +22,7 @@ impl PacketStream {
         let live_capture = handle.is_live_capture();
 
         if live_capture {
-            let configured = handle.set_snaplen(config.snaplen())?
+            handle.set_snaplen(config.snaplen())?
                 .set_non_block()?
                 .set_promiscuous()?
                 .set_timeout(config.timeout())?
