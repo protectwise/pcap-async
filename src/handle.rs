@@ -32,19 +32,12 @@ impl Handle {
             })
         } else {
             info!("Live stream created for interface {}", iface);
-            if 0 > unsafe {
-                pcap_sys::pcap_activate(h)
-            } {
-                pcap_util::cstr_to_string(errbuf as _)
-                    .and_then(|msg| Err(Error::LibPcapError { msg: msg }))
-            } else {
-                let handle = std::sync::Arc::new(Handle {
-                    handle: h,
-                    live_capture: false,
-                    interrupted: std::sync::Arc::new(std::sync::Mutex::new(false))
-                });
-                Ok(handle)
-            }
+            let handle = std::sync::Arc::new(Handle {
+                handle: h,
+                live_capture: true,
+                interrupted: std::sync::Arc::new(std::sync::Mutex::new(false))
+            });
+            Ok(handle)
         };
         drop(errbuf);
         r
