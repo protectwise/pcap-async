@@ -6,7 +6,7 @@ use std;
 pub struct Handle {
     handle: *mut pcap_sys::pcap_t,
     live_capture: bool,
-    interrupted: std::sync::Arc<std::sync::atomic::AtomicBool>
+    interrupted: std::sync::Arc<std::sync::Mutex<bool>>
 }
 
 unsafe impl Send for Handle {}
@@ -35,7 +35,7 @@ impl Handle {
             let handle = std::sync::Arc::new(Handle {
                 handle: h,
                 live_capture: false,
-                interrupted: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
+                interrupted: std::sync::Arc::new(std::sync::Mutex::new(false))
             });
             Ok(handle)
         };
@@ -61,7 +61,7 @@ impl Handle {
             let handle = std::sync::Arc::new(Handle {
                 handle: h,
                 live_capture: false,
-                interrupted: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
+                interrupted: std::sync::Arc::new(std::sync::Mutex::new(false))
             });
             Ok(handle)
         };
@@ -186,13 +186,18 @@ impl Handle {
     }
 
     pub fn interrupted(&self) -> bool {
-        self.interrupted.load(std::sync::atomic::Ordering::Relaxed)
+        self.interrupted.lock().map(|l| *l).unwrap_or(true)
     }
 
-    pub fn interrupt(&mut self) {
-        self.interrupted.store(true, std::sync::atomic::Ordering::Relaxed);
-        unsafe {
-            pcap_sys::pcap_breakloop(self.handle);
+    pub fn interrupt(&self) {
+        let interrupted = self.interrupted.lock().map(|mut l| {
+            *l = true;
+            false
+        }).unwrap_or(true);
+        if !interrupted {
+            unsafe {
+                pcap_sys::pcap_breakloop(self.handle);
+            }
         }
     }
 }
