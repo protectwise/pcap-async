@@ -29,7 +29,7 @@ extern "C" fn dispatch_callback(
                 + std::time::Duration::from_micros((*header).ts.tv_usec as u64);
             let length = (*header).caplen as usize;
             let mut data_vec = Vec::with_capacity(length);
-            data_vec.reserve(length);
+            data_vec.resize(length, 0u8);
             std::ptr::copy(data, data_vec.as_mut_ptr(), length);
             let record = Packet::new(ts, (*header).caplen, (*header).len, data_vec);
             pending.push(record)

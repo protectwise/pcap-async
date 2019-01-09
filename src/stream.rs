@@ -90,6 +90,7 @@ mod tests {
             let packets = futures::executor::block_on(fut_packets)
                 .iter()
                 .flatten()
+                .filter(|p| p.data().len() == p.actual_length() as _)
                 .count();
 
             interrupt_clone.store(true, std::sync::atomic::Ordering::Relaxed);
