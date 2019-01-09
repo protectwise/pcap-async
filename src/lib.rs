@@ -28,8 +28,7 @@ extern "C" fn dispatch_callback(
                 + std::time::Duration::from_secs((*header).ts.tv_sec as u64)
                 + std::time::Duration::from_micros((*header).ts.tv_usec as u64);
             let length = (*header).caplen as usize;
-            let mut data_vec = Vec::with_capacity(length);
-            data_vec.resize(length, 0u8);
+            let mut data_vec = vec![0u8; length];
             std::ptr::copy(data, data_vec.as_mut_ptr(), length);
             let record = Packet::new(ts, (*header).caplen, (*header).len, data_vec);
             pending.push(record)
@@ -56,8 +55,6 @@ async fn next_packets(
             )
         };
 
-        debug!("Dispatch returned {}", ret_code);
-
         match ret_code {
             -2 => {
                 debug!("Pcap breakloop invoked");
@@ -69,13 +66,7 @@ async fn next_packets(
                 return None;
             }
             0 => {
-                if !packets.is_empty() {
-                    if !live_capture {
-                        unsafe { pcap_sys::pcap_breakloop(pcap_handle.as_mut_ptr()) }
-                    }
-                    trace!("Capture loop breaking with {} packets", packets.len());
-                    return Some(packets);
-                } else {
+                if packets.is_empty() {
                     debug!("No packets read, delaying to retry");
 
                     let f = timer_handle
@@ -84,16 +75,22 @@ async fn next_packets(
                     if let Err(e) = await!(f) {
                         error!("Failed to delay: {:?}", e);
                     }
+                } else {
+                    if !live_capture {
+                        unsafe { pcap_sys::pcap_breakloop(pcap_handle.as_mut_ptr()) }
+                    }
+                    trace!("Capture loop breaking with {} packets", packets.len());
+                    return Some(packets);
                 }
             }
-            _ => {
-                trace!(
-                    "Pcap dispatch returned, after processing {} packets",
-                    ret_code
-                );
+            x if x > 0 => {
                 if packets.len() >= max_packets_read {
                     return Some(packets);
                 }
+            }
+            _ => {
+                error!("Pcap dispatch returned {}", ret_code);
+                return None;
             }
         }
     }
