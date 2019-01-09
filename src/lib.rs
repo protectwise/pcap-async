@@ -29,7 +29,7 @@ extern "C" fn dispatch_callback(
                 + std::time::Duration::from_micros((*header).ts.tv_usec as u64);
             let length = (*header).caplen as usize;
             let mut data_vec = Vec::with_capacity(length);
-            data_vec.set_len(length);
+            data_vec.reserve(length);
             std::ptr::copy(data, data_vec.as_mut_ptr(), length);
             let record = Packet::new(ts, (*header).caplen, (*header).len, data_vec);
             pending.push(record)
@@ -46,7 +46,7 @@ async fn next_packets(
     live_capture: bool,
 ) -> Option<Vec<Packet>> {
     let mut packets = packets;
-    loop {
+    while !pcap_handle.interrupted() {
         let ret_code = unsafe {
             pcap_sys::pcap_dispatch(
                 std::sync::Arc::new(&pcap_handle).as_mut_ptr(),
@@ -61,6 +61,11 @@ async fn next_packets(
         match ret_code {
             -2 => {
                 debug!("Pcap breakloop invoked");
+                return None;
+            }
+            -1 => {
+                let err = pcap_util::convert_libpcap_error(pcap_handle.as_mut_ptr());
+                error!("Error encountered when calling pcap_dispatch: {}", err);
                 return None;
             }
             0 => {
@@ -81,11 +86,6 @@ async fn next_packets(
                     }
                 }
             }
-            x if x < 0 => {
-                let err = pcap_util::convert_libpcap_error(pcap_handle.as_mut_ptr());
-                error!("Error encountered when calling pcap_dispatch ({}): {}", x, err);
-                return None;
-            }
             _ => {
                 trace!(
                     "Pcap dispatch returned, after processing {} packets",
@@ -97,4 +97,5 @@ async fn next_packets(
             }
         }
     }
+    return None;
 }

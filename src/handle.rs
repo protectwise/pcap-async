@@ -6,6 +6,7 @@ use std;
 pub struct Handle {
     handle: *mut pcap_sys::pcap_t,
     live_capture: bool,
+    interrupted: std::sync::Arc<std::sync::atomic::AtomicBool>
 }
 
 unsafe impl Send for Handle {}
@@ -34,6 +35,7 @@ impl Handle {
             let handle = std::sync::Arc::new(Handle {
                 handle: h,
                 live_capture: false,
+                interrupted: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
             });
             Ok(handle)
         };
@@ -59,6 +61,7 @@ impl Handle {
             let handle = std::sync::Arc::new(Handle {
                 handle: h,
                 live_capture: false,
+                interrupted: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
             });
             Ok(handle)
         };
@@ -182,7 +185,12 @@ impl Handle {
         self.handle
     }
 
-    pub fn interrupt(&self) {
+    pub fn interrupted(&self) -> bool {
+        self.interrupted.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn interrupt(&mut self) {
+        self.interrupted.store(true, std::sync::atomic::Ordering::Relaxed);
         unsafe {
             pcap_sys::pcap_breakloop(self.handle);
         }
