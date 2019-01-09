@@ -63,11 +63,6 @@ async fn next_packets(
                 debug!("Pcap breakloop invoked");
                 return None;
             }
-            -1 => {
-                let err = pcap_util::convert_libpcap_error(pcap_handle.as_mut_ptr());
-                error!("Error encountered when calling pcap_dispatch: {}", err);
-                return None;
-            }
             0 => {
                 if !packets.is_empty() {
                     if !live_capture {
@@ -85,6 +80,11 @@ async fn next_packets(
                         error!("Failed to delay: {:?}", e);
                     }
                 }
+            }
+            x if x < 0 => {
+                let err = pcap_util::convert_libpcap_error(pcap_handle.as_mut_ptr());
+                error!("Error encountered when calling pcap_dispatch ({}): {}", x, err);
+                return None;
             }
             _ => {
                 trace!(
