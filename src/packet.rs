@@ -6,6 +6,7 @@ pub struct Packet {
 }
 
 impl Packet {
+    pub fn into_data(self) -> Vec<u8> { self.data }
     pub fn timestamp(&self) -> &std::time::SystemTime {
         &self.timestamp
     }
