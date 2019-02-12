@@ -7,9 +7,10 @@ pub mod handle;
 pub mod packet;
 pub mod pcap_util;
 pub mod provider;
+pub mod stats;
 pub mod stream;
 
-pub use crate::{config::Config, handle::Handle, packet::Packet, provider::PacketProvider};
+pub use crate::{config::Config as Config, handle::Handle as Handle, packet::Packet as Packet, provider::PacketProvider, stats::Stats as Stats};
 use futures::compat::Future01CompatExt;
 use log::*;
 use tokio_timer::timer::Handle as TimerHandle;

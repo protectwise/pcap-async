@@ -1,4 +1,4 @@
-use crate::{errors::Error, pcap_util};
+use crate::{errors::Error, pcap_util, stats::Stats};
 use log::*;
 use std;
 
@@ -198,6 +198,24 @@ impl Handle {
             unsafe {
                 pcap_sys::pcap_breakloop(self.handle);
             }
+        }
+    }
+
+    pub fn stats(&self) -> Result<Stats, Error> {
+        let mut stats: pcap_sys::pcap_stat = pcap_sys::pcap_stat {
+            ps_recv: 0,
+            ps_drop: 0,
+            ps_ifdrop: 0
+        };
+        if 0 != unsafe { pcap_sys::pcap_stats(self.handle, &mut stats) } {
+            Err(pcap_util::convert_libpcap_error(self.handle))
+        } else {
+            let stats = Stats {
+                received: stats.ps_recv,
+                dropped_by_kernel: stats.ps_drop,
+                dropped_by_interface: stats.ps_ifdrop
+            };
+            Ok(stats)
         }
     }
 }
