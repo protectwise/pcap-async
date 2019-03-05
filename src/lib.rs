@@ -39,7 +39,6 @@ extern "C" fn dispatch_callback(
 
 async fn next_packets(
     pcap_handle: std::sync::Arc<Handle>,
-    timer_handle: TimerHandle,
     delay: std::time::Duration,
     max_packets_read: usize,
     packets: Vec<Packet>,
@@ -70,9 +69,7 @@ async fn next_packets(
                 if packets.is_empty() {
                     debug!("No packets read, delaying to retry");
 
-                    let f = timer_handle
-                        .delay(std::time::Instant::now() + delay)
-                        .compat();
+                    let f = tokio_timer::sleep(delay).compat();
                     if let Err(e) = await!(f) {
                         error!("Failed to delay: {:?}", e);
                     }
