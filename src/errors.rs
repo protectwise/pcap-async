@@ -6,6 +6,8 @@ pub enum Error {
     Io(#[fail(cause)] std::io::Error),
     #[fail(display = "Null pointer when dealing with ffi")]
     Ffi(#[fail(cause)] std::ffi::NulError),
+    #[fail(display = "Nul Error when dealing with ffi")]
+    FfiNul(#[fail(cause)] std::ffi::FromBytesWithNulError),
     #[fail(display = "Utf8 conversion error")]
     Utf8(#[fail(cause)] std::str::Utf8Error),
     #[fail(display = "TokioTimer error")]
