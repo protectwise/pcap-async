@@ -96,7 +96,8 @@ async fn next_packets(
     return None;
 }
 
-fn list_devices<F>(filter: F) -> Result<Vec<String>, errors::Error> where F: Fn(&str) -> bool {
+/// List available devices by name, that match a filter against the name of the interface
+pub fn list_devices<F>(filter: F) -> Result<Vec<String>, errors::Error> where F: Fn(&str) -> bool {
     let mut err_buf = vec![0u8 as std::os::raw::c_char; pcap_sys::PCAP_ERRBUF_SIZE as _];
     let mut device_result: *mut pcap_sys::pcap_if_t = std::ptr::null_mut();
 
