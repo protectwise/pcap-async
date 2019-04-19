@@ -147,7 +147,7 @@ impl Handle {
             bf_insns: std::ptr::null_mut(),
         };
 
-        let bpf_str = std::ffi::CString::new(bpf.to_string()).map_err(Error::Ffi)?;
+        let bpf_str = std::ffi::CString::new(bpf.clone()).map_err(Error::Ffi)?;
 
         if 0 != unsafe {
             pcap_sys::pcap_compile(
@@ -218,13 +218,17 @@ impl Handle {
             Ok(stats)
         }
     }
+
+    pub fn close(&self) {
+        unsafe {
+            pcap_sys::pcap_close(self.handle)
+        }
+    }
 }
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        unsafe {
-            pcap_sys::pcap_close(self.handle);
-        }
+        self.close();
     }
 }
 

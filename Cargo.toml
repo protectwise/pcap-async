@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 failure = "~0.1"
 failure_derive = "~0.1"
-futures-preview = { version ="0.3.0-alpha.13", features = ["compat"] }
+futures-preview = { version ="0.3.0-alpha.14", features = ["compat"] }
 libc = "~0.2"
 log = "~0.4"
 pcap-sys = { git = "https://github.com/protectwise/pcap-sys.git" }

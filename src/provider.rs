@@ -36,8 +36,8 @@ impl PacketProvider {
                 .set_buffer_size(config.buffer_size())?
                 .activate()?;
 
-            if let Some(ref s) = config.bpf() {
-                handle.set_bpf(s)?;
+            if let Some(bpf) = config.bpf() {
+                handle.set_bpf(bpf)?;
             }
         }
 
@@ -104,6 +104,23 @@ mod tests {
         let handle = Handle::lookup().expect("No handle created");
 
         let stream = PacketProvider::new(Config::default(), handle);
+
+        assert!(
+            stream.is_ok(),
+            format!("Could not build stream {}", stream.err().unwrap())
+        );
+    }
+
+    #[test]
+    fn packets_from_lookup_with_bpf() {
+        let _ = env_logger::try_init();
+
+        let mut cfg = Config::default();
+        cfg.with_bpf("(not (net 172.16.0.0/16 and port 443)) and (not (host 172.17.76.33 and port 443))".to_owned());
+
+        let handle = Handle::lookup().expect("No handle created");
+
+        let stream = PacketProvider::new(cfg, handle);
 
         assert!(
             stream.is_ok(),

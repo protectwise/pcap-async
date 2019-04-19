@@ -51,7 +51,7 @@ impl Config {
         &self.bpf
     }
 
-    pub fn with_bf(&mut self, amt: String) -> &mut Self {
+    pub fn with_bpf(&mut self, amt: String) -> &mut Self {
         self.bpf = Some(amt);
         self
     }
