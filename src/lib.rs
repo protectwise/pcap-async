@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_imports)]
-#![feature(ptr_internals, test, async_await, await_macro)]
-
+#![feature(ptr_internals, test, async_await)]
+pub mod bpf;
 pub mod config;
 pub mod errors;
 pub mod handle;
@@ -71,7 +71,7 @@ async fn next_packets(
                     debug!("No packets read, delaying to retry");
 
                     let f = tokio_timer::sleep(delay).compat();
-                    if let Err(e) = await!(f) {
+                    if let Err(e) = f.await {
                         error!("Failed to delay: {:?}", e);
                     }
                 } else {

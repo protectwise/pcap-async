@@ -30,6 +30,8 @@ pub enum Error {
         #[fail(cause)]
         error: failure::Error,
     },
+    #[fail(display = "{}", msg)]
+    Custom { msg: String },
 }
 
 unsafe impl Sync for Error {}

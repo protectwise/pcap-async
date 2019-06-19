@@ -1,7 +1,11 @@
 use crate::{errors::Error, pcap_util, stats::Stats};
+use crate::bpf::Bpf;
 use log::*;
-use std;
+use std::path::Path;
+use std::os::raw::c_int;
 
+/// Wrapper around a pcap_t handle to indicate live or offline capture, and allow the handle to
+/// be interrupted to stop capture.
 #[derive(Clone)]
 pub struct Handle {
     handle: *mut pcap_sys::pcap_t,
@@ -17,6 +21,7 @@ impl Handle {
         self.live_capture
     }
 
+    /// Create a live capture from a string representing an interface
     pub fn live_capture(iface: &str) -> Result<std::sync::Arc<Handle>, Error> {
         let device_str = std::ffi::CString::new(iface).map_err(Error::Ffi)?;
 
@@ -43,7 +48,13 @@ impl Handle {
         r
     }
 
-    pub fn file_capture(path: &str) -> Result<std::sync::Arc<Handle>, Error> {
+    /// Create an offline capture from a path to a file
+    pub fn file_capture<P: AsRef<Path>>(path: P) -> Result<std::sync::Arc<Handle>, Error> {
+        let path = if let Some(s) = path.as_ref().to_str() {
+            s
+        } else {
+            return Err(Error::Custom { msg: format!("Invalid path: {:?}", path.as_ref()) })
+        };
         let device_str = std::ffi::CString::new(path).map_err(Error::Ffi)?;
 
         let errbuf = ([0i8; 256]).as_mut_ptr();
@@ -67,6 +78,23 @@ impl Handle {
         };
         drop(errbuf);
         r
+    }
+
+    /// Create a dead handle, typically used for compiling bpf's
+    pub fn dead(linktype: i32, snaplen: i32) -> Result<std::sync::Arc<Handle>, Error> {
+        let h = unsafe { pcap_sys::pcap_open_dead(linktype as c_int, snaplen as c_int) };
+        if h.is_null() {
+            error!("Failed to create dead handle");
+            Err(Error::Custom { msg: "Could not create dead handle".to_owned() })
+        } else {
+            info!("Dead handle created");
+            let handle = std::sync::Arc::new(Handle {
+                handle: h,
+                live_capture: false,
+                interrupted: std::sync::Arc::new(std::sync::Mutex::new(false))
+            });
+            Ok(handle)
+        }
     }
 
     pub fn lookup() -> Result<std::sync::Arc<Handle>, Error> {
@@ -138,10 +166,10 @@ impl Handle {
         }
     }
 
-    pub fn set_bpf(
+    pub fn compile_bpf(
         &self,
-        bpf: &String,
-    ) -> Result<&Self, Error> {
+        bpf: &str,
+    ) -> Result<Bpf, Error> {
         let mut bpf_program = pcap_sys::bpf_program {
             bf_len: 0,
             bf_insns: std::ptr::null_mut(),
@@ -161,10 +189,16 @@ impl Handle {
             return Err(pcap_util::convert_libpcap_error(self.handle));
         }
 
-        let ret_code = unsafe { pcap_sys::pcap_setfilter(self.handle, &mut bpf_program) };
-        unsafe {
-            pcap_sys::pcap_freecode(&mut bpf_program);
-        }
+        Ok(Bpf::new(bpf_program))
+    }
+
+    pub fn set_bpf(
+        &self,
+        bpf: Bpf,
+    ) -> Result<&Self, Error> {
+        let mut bpf = bpf;
+
+        let ret_code = unsafe { pcap_sys::pcap_setfilter(self.handle, bpf.inner_mut()) };
         if ret_code != 0 {
             return Err(pcap_util::convert_libpcap_error(self.handle));
         }
@@ -258,5 +292,23 @@ mod tests {
         let handle = Handle::lookup();
 
         assert!(handle.is_ok());
+    }
+    #[test]
+    fn open_dead() {
+        let _ = env_logger::try_init();
+
+        let handle = Handle::dead(0, 0);
+
+        assert!(handle.is_ok());
+    }
+    #[test]
+    fn bpf_compile() {
+        let _ = env_logger::try_init();
+
+        let handle = Handle::dead(0, 1555).expect("Could not create dead handle");
+
+        let bpf = handle.compile_bpf("(not (net 192.168.0.0/16 and port 443)) and (not (host 192.1.2.3 and port 443))");
+
+        assert!(bpf.is_ok(), "{:?}", bpf);
     }
 }

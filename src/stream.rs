@@ -29,6 +29,7 @@ impl PacketStream {
                 .activate()?;
 
             if let Some(bpf) = config.bpf() {
+                let bpf = handle.compile_bpf(bpf)?;
                 handle.set_bpf(bpf)?;
             }
         }

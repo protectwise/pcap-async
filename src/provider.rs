@@ -37,6 +37,7 @@ impl PacketProvider {
                 .activate()?;
 
             if let Some(bpf) = config.bpf() {
+                let bpf = handle.compile_bpf(bpf)?;
                 handle.set_bpf(bpf)?;
             }
         }
@@ -64,7 +65,7 @@ mod tests {
         let mut provider = provider;
         let mut agg = 0;
         loop {
-            if let Some(p) = await!(provider.next_packets()) {
+            if let Some(p) = provider.next_packets().await {
                 agg += p.len();
             } else {
                 break;
@@ -88,7 +89,7 @@ mod tests {
 
         let packet_provider =
             PacketProvider::new(Config::default(), std::sync::Arc::clone(&handle)).expect("Failed to build");
-        let fut_packets: std::pin::Pin<Box<std::future::Future<Output = usize> + Send>> =
+        let fut_packets: std::pin::Pin<Box<dyn std::future::Future<Output = usize> + Send>> =
             get_packets(packet_provider).boxed();
         let packets = futures::executor::block_on(fut_packets);
 
