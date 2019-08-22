@@ -1,17 +1,42 @@
 [package]
-name = "pcap"
-version = "0.1.0"
-authors = ["Danny Browning <danny.browning@protectwise.com>"]
+name = "pcap-async"
 edition = "2018"
+# When releasing to crates.io:
+# - Update html_root_url.
+# - Update CHANGELOG.md.
+# - Update doc URL.
+# - Create "v0.1.x" git tag.
+version = "0.1.0-alpha.1"
+license = "MIT"
+readme = "README.md"
+description = """
+Async/Stream Extensions for libpcap
+"""
+authors = ["Danny Browning <bdbrowning2@gmail.com>"]
+categories = ["asynchronous", "network-programming"]
+documentation = "https://docs.rs/pcap-async/"
+repository = "https://github.com/dbcfd/pcap-async"
 
 [dependencies]
-failure = "~0.1"
-failure_derive = "~0.1"
-futures-preview = { version ="0.3.0-alpha.14", features = ["compat"] }
-libc = "~0.2"
-log = "~0.4"
-pcap-sys = { git = "https://github.com/protectwise/pcap-sys.git" }
-tokio-timer = "~0.2"
+byteorder = "1.3"
+failure = "0.1"
+failure_derive = "0.1"
+futures-preview = { version ="0.3.0-alpha.19", features = ["async-await"] }
+libc = "0.2"
+log = "0.4"
+pin-project = "0.4.0-alpha.9"
+pcap-sys = { git = "https://github.com/protectwise/pcap-sys.git", tag = "v0.2.0" }
+tokio-timer = "0.3.0-alpha.6"
 
 [dev-dependencies]
-env_logger = "~0.6"
+criterion = "0.2"
+env_logger = "0.6"
+tokio = "0.2.0-alpha.6"
+
+[lib]
+path = "src/lib.rs"
+
+[[bench]]
+path = "benches/bench_capture.rs"
+name = "bench_capture"
+harness = false

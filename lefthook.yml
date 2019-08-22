@@ -1,0 +1,15 @@
+format:
+  piped: true
+  commands:
+    1_install:
+      run: rustup component add rustfmt
+    2_cargo_fmt:
+      run: cargo +nightly fmt --all
+
+pre-push:
+  piped: true
+  commands:
+    1_install:
+      run: rustup component add rustfmt
+    2_fmt:
+      run: cargo +nightly fmt --all -- --check
