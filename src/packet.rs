@@ -70,9 +70,9 @@ impl Packet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::SystemTime;
     use byteorder::ReadBytesExt;
     use std::io::Read;
+    use std::time::SystemTime;
 
     #[test]
     fn converts_to_record() {
@@ -84,17 +84,44 @@ mod tests {
             original_length: 200,
             data: data.clone(),
         };
-        let bytes = packet.into_pcap_record::<byteorder::LittleEndian>().expect("Failed to convert to record");
+        let bytes = packet
+            .into_pcap_record::<byteorder::LittleEndian>()
+            .expect("Failed to convert to record");
 
-        let dur = ts.duration_since(std::time::UNIX_EPOCH).expect("Could not convert to dur");
+        let dur = ts
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Could not convert to dur");
 
         let mut cursor = Cursor::new(bytes);
-        assert_eq!(cursor.read_u32::<byteorder::LittleEndian>().expect("Failed to read"), dur.as_secs() as u32);
-        assert_eq!(cursor.read_u32::<byteorder::LittleEndian>().expect("Failed to read"), dur.subsec_micros());
-        assert_eq!(cursor.read_u32::<byteorder::LittleEndian>().expect("Failed to read"), 100);
-        assert_eq!(cursor.read_u32::<byteorder::LittleEndian>().expect("Failed to read"), 200);
+        assert_eq!(
+            cursor
+                .read_u32::<byteorder::LittleEndian>()
+                .expect("Failed to read"),
+            dur.as_secs() as u32
+        );
+        assert_eq!(
+            cursor
+                .read_u32::<byteorder::LittleEndian>()
+                .expect("Failed to read"),
+            dur.subsec_micros()
+        );
+        assert_eq!(
+            cursor
+                .read_u32::<byteorder::LittleEndian>()
+                .expect("Failed to read"),
+            100
+        );
+        assert_eq!(
+            cursor
+                .read_u32::<byteorder::LittleEndian>()
+                .expect("Failed to read"),
+            200
+        );
         let mut read_data = vec![];
-        assert_eq!(cursor.read_to_end(&mut read_data).expect("Failed to read"), 100);
+        assert_eq!(
+            cursor.read_to_end(&mut read_data).expect("Failed to read"),
+            100
+        );
         assert_eq!(read_data, data);
     }
 }
