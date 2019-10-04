@@ -10,8 +10,8 @@ pub enum Error {
     FfiNul(#[fail(cause)] std::ffi::FromBytesWithNulError),
     #[fail(display = "Utf8 conversion error")]
     Utf8(#[fail(cause)] std::str::Utf8Error),
-    #[fail(display = "TokioTimer error")]
-    TokioTimer(#[fail(cause)] tokio_timer::Error),
+    #[fail(display = "Time conversion error")]
+    Time(#[fail(cause)] std::time::SystemTimeError),
     #[fail(display = "Null ptr returned")]
     NullPtr,
     #[fail(display = "Libpcap failed populate header")]

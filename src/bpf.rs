@@ -6,9 +6,7 @@ pub struct Bpf {
 
 impl Bpf {
     pub fn new(inner: pcap_sys::bpf_program) -> Bpf {
-        Bpf {
-            inner
-        }
+        Bpf { inner }
     }
     pub fn inner_mut(&mut self) -> &mut pcap_sys::bpf_program {
         &mut self.inner

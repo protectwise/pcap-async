@@ -2,26 +2,29 @@ use crate::config::Config;
 use crate::errors::Error;
 use crate::handle::Handle;
 use crate::packet::Packet;
+use crate::packet_future::PacketFuture;
 use crate::pcap_util;
 
-use futures::compat::Future01CompatExt;
 use futures::stream::{Stream, StreamExt};
-use futures::{Future, FutureExt};
 use log::*;
-use std::{self, pin::Pin, task::Poll};
-use tokio_timer::timer::Handle as TimerHandle;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 
-pub struct PacketStream {}
+pub struct PacketStream {
+    config: Config,
+    handle: Arc<Handle>,
+    pending: Option<PacketFuture>,
+}
 
 impl PacketStream {
-    pub fn new(
-        config: Config,
-        handle: std::sync::Arc<Handle>,
-    ) -> Result<impl Stream<Item = Vec<Packet>>, Error> {
+    pub fn new(config: Config, handle: Arc<Handle>) -> Result<PacketStream, Error> {
         let live_capture = handle.is_live_capture();
 
         if live_capture {
-            handle.set_snaplen(config.snaplen())?
+            handle
+                .set_snaplen(config.snaplen())?
                 .set_non_block()?
                 .set_promiscuous()?
                 .set_timeout(config.timeout())?
@@ -34,37 +37,56 @@ impl PacketStream {
             }
         }
 
-        let max_packets_read = config.max_packets_read();
-        let retry_after = config.retry_after().clone();
+        Ok(PacketStream {
+            config: config,
+            handle: handle,
+            pending: None,
+        })
+    }
+}
 
-        let stream = futures::stream::repeat(())
-            .then(move |_| {
-                crate::next_packets(
-                    std::sync::Arc::clone(&handle),
-                    retry_after.clone(),
-                    max_packets_read,
-                    vec![],
-                    live_capture,
-                )
-            })
-            .take_while(|v| futures::future::ready(v.is_some()))
-            .filter_map(|v| futures::future::ready(v));
-        Ok(stream)
+impl Stream for PacketStream {
+    type Item = Result<Vec<Packet>, Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let Self {
+            config,
+            handle,
+            pending,
+        } = unsafe { self.get_unchecked_mut() };
+
+        if pending.is_none() {
+            *pending = Some(PacketFuture::new(config, handle))
+        }
+        let p = pending.as_mut().unwrap();
+        let pin_pending = unsafe { Pin::new_unchecked(p) };
+        let packets = futures::ready!(pin_pending.poll(cx));
+        *pending = None;
+        let r = match packets {
+            Err(e) => Some(Err(e)),
+            Ok(None) => {
+                debug!("Pcap stream complete");
+                None
+            }
+            Ok(Some(p)) => {
+                debug!("Pcap stream produced {} packets", p.len());
+                Some(Ok(p))
+            }
+        };
+        Poll::Ready(r)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    extern crate test;
-
-    use self::test::Bencher;
-
     use super::*;
+    use byteorder::{ByteOrder, ReadBytesExt};
     use futures::{Future, Stream};
+    use std::io::Cursor;
     use std::path::PathBuf;
 
-    #[test]
-    fn packets_from_file() {
+    #[tokio::test]
+    async fn packets_from_file() {
         let _ = env_logger::try_init();
 
         let pcap_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -77,10 +99,67 @@ mod tests {
             .expect("No handle created");
 
         let packet_provider =
-            PacketStream::new(Config::default(), std::sync::Arc::clone(&handle)).expect("Failed to build");
+            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
         let fut_packets = packet_provider.collect::<Vec<_>>();
-        let packets = futures::executor::block_on(fut_packets)
-            .iter()
+        let packets: Vec<_> = fut_packets
+            .await
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|p| p.data().len() == p.actual_length() as _)
+            .collect();
+
+        handle.interrupt();
+
+        assert_eq!(packets.len(), 10);
+
+        let packet = packets.first().cloned().expect("No packets");
+        let data = packet
+            .into_pcap_record::<byteorder::BigEndian>()
+            .expect("Failed to convert to pcap record");
+        let mut cursor = Cursor::new(data);
+        let ts_sec = cursor
+            .read_u32::<byteorder::BigEndian>()
+            .expect("Failed to read");
+        let ts_usec = cursor
+            .read_u32::<byteorder::BigEndian>()
+            .expect("Failed to read");
+        let actual_length = cursor
+            .read_u32::<byteorder::BigEndian>()
+            .expect("Failed to read");
+        assert_eq!(
+            ts_sec as u64 * 1_000_000 as u64 + ts_usec as u64,
+            1513735120021685
+        );
+        assert_eq!(actual_length, 54);
+    }
+
+    #[tokio::test]
+    async fn packets_from_file_next() {
+        let _ = env_logger::try_init();
+
+        let pcap_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("canary.pcap");
+
+        info!("Testing against {:?}", pcap_path);
+
+        let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
+            .expect("No handle created");
+
+        let packet_provider =
+            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+        let fut_packets = async move {
+            let mut packet_provider = packet_provider.boxed();
+            let mut packets = vec![];
+            while let Some(p) = packet_provider.next().await {
+                packets.extend(p);
+            }
+            packets
+        };
+        let packets = fut_packets
+            .await
+            .into_iter()
             .flatten()
             .filter(|p| p.data().len() == p.actual_length() as _)
             .count();
@@ -109,7 +188,10 @@ mod tests {
         let _ = env_logger::try_init();
 
         let mut cfg = Config::default();
-        cfg.with_bpf("(not (net 172.16.0.0/16 and port 443)) and (not (host 172.17.76.33 and port 443))".to_owned());
+        cfg.with_bpf(
+            "(not (net 172.16.0.0/16 and port 443)) and (not (host 172.17.76.33 and port 443))"
+                .to_owned(),
+        );
         let handle = Handle::lookup().expect("No handle created");
 
         let stream = PacketStream::new(cfg, handle);
@@ -118,38 +200,5 @@ mod tests {
             stream.is_ok(),
             format!("Could not build stream {}", stream.err().unwrap())
         );
-    }
-
-    #[bench]
-    fn bench_packets_from_large_file(b: &mut Bencher) {
-        let _ = env_logger::try_init();
-
-        let pcap_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join("4SICS-GeekLounge-151020.pcap");
-
-        info!("Benchmarking against {:?}", pcap_path.clone());
-
-        b.iter(|| {
-            let clone_path = pcap_path.clone();
-
-            let handle = Handle::file_capture(clone_path.to_str().expect("No path found"))
-                .expect("No handle created");
-
-            let mut cfg = Config::default();
-            cfg.with_max_packets_read(5000);
-
-            let packet_provider = PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
-                .expect("Failed to build");
-            let fut_packets = packet_provider.collect::<Vec<_>>();
-            let packets = futures::executor::block_on(fut_packets)
-                .iter()
-                .flatten()
-                .count();
-
-            handle.interrupt();
-
-            assert_eq!(packets, 246137);
-        });
     }
 }
