@@ -24,6 +24,7 @@ pub mod bpf;
 mod config;
 mod errors;
 mod handle;
+mod info;
 mod packet;
 mod packet_future;
 pub mod pcap_util;
@@ -31,7 +32,7 @@ mod stats;
 mod stream;
 
 pub use crate::{
-    config::Config, errors::Error, handle::Handle, packet::Packet, stats::Stats,
+    config::Config, errors::Error, handle::Handle, info::Info, packet::Packet, stats::Stats,
     stream::PacketStream,
 };
 use failure::Fail;
@@ -42,57 +43,11 @@ pub fn new_stream(config: Config, handle: Arc<Handle>) -> Result<PacketStream, E
     PacketStream::new(config, handle)
 }
 
-/// List available devices by name, that match a filter against the name of the interface
-pub fn list_devices<F>(filter: F) -> Result<Vec<String>, errors::Error>
-where
-    F: Fn(&str) -> bool,
-{
-    let mut err_buf = vec![0u8 as std::os::raw::c_char; pcap_sys::PCAP_ERRBUF_SIZE as _];
-    let mut device_result: *mut pcap_sys::pcap_if_t = std::ptr::null_mut();
-
-    unsafe {
-        let buf = std::mem::transmute::<&mut *mut pcap_sys::pcap_if_t, *mut *mut pcap_sys::pcap_if_t>(
-            &mut device_result,
-        );
-        if 0 != pcap_sys::pcap_findalldevs(buf, err_buf.as_mut_ptr()) {
-            let err: Vec<_> = err_buf.iter().map(|v| *v as u8).collect();
-            let err_str =
-                std::ffi::CStr::from_bytes_with_nul(err.as_ref()).map_err(errors::Error::FfiNul)?;
-            let utf_str = err_str.to_str().map_err(errors::Error::Utf8)?;
-            return Err(errors::Error::LibPcapError {
-                msg: utf_str.to_owned(),
-            });
-        }
-    }
-
-    let mut result = vec![];
-
-    while device_result != std::ptr::null_mut() {
-        let device_name_ptr = unsafe { (*device_result).name };
-        let device_name = pcap_util::cstr_to_string(device_name_ptr)?;
-        if filter(&device_name) {
-            result.push(device_name);
-        }
-        device_result = unsafe { (*device_result).next };
-    }
-
-    return Ok(result);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use futures::StreamExt;
     use std::path::PathBuf;
-
-    #[test]
-    fn test_list_devices() {
-        let devices = list_devices(|_| true).expect("Failed to list");
-
-        println!("Devices={:?}", devices);
-
-        assert!(devices.is_empty() == false);
-    }
 
     #[tokio::test]
     async fn capture_from_file() {
