@@ -3,8 +3,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 #[derive(Clone, Debug)]
 pub struct Info {
-    name: String,
-    ips: Vec<IpAddr>,
+    pub name: String,
+    pub ips: Vec<IpAddr>,
 }
 
 impl Info {
