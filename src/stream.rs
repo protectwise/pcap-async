@@ -112,12 +112,13 @@ impl<St1, St2> Stream for Select<St1, St2>
         }
     }
 }*/
-struct BridgedStream<St> {
+struct BridgedStream<St>
+{
     streams: VecDeque<St>
 }
 
 
-impl<St> Stream for BridgedStream<St> where St: Stream<Item = Result<Vec<Packet>, Error>> {
+impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedStream<St> { //where St: Stream<Item = Result<Vec<Packet>, Error>> {
     type Item = Result<Vec<Packet>, Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -127,8 +128,9 @@ impl<St> Stream for BridgedStream<St> where St: Stream<Item = Result<Vec<Packet>
         for _ in 0..size {
             let current_stream_option = this.streams.pop_front();
             match current_stream_option {
-                Some(current_stream) => {
-                    let current_value = current_stream.poll_next();
+                Some(mut current_stream) => {
+                    let blah = current_stream.size_hint();
+                    let current_value = Pin::new(&mut current_stream).poll_next(cx);
                     // match current_value {
                     //     Poll::Pending => {
         
