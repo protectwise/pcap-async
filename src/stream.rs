@@ -5,8 +5,10 @@ use crate::packet::Packet;
 use crate::packet_future::PacketFuture;
 use crate::pcap_util;
 
-use futures::stream::{Stream, StreamExt};
+use futures::stream;
+use futures::stream::{Stream, StreamExt, Fuse};
 use log::*;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -19,6 +21,16 @@ pub struct PacketStream {
 }
 
 impl PacketStream {
+    // pub async fn flatten(streams: Vec<PacketStream>) -> Result<Vec<Packet>, Error> {
+    //     use futures::stream::TryStreamExt;
+    //     let mut combined_stream = stream::select_all(streams);
+    //     let mut all_packets: Vec<Packet> = vec![];
+    //     while let Some(packets) = combined_stream.try_next().await? {
+    //         all_packets.append(&mut packets.clone());
+    //     }
+
+    //     Ok(all_packets)
+    // }
     pub fn new(config: Config, handle: Arc<Handle>) -> Result<PacketStream, Error> {
         let live_capture = handle.is_live_capture();
 
@@ -74,6 +86,69 @@ impl Stream for PacketStream {
             }
         };
         Poll::Ready(r)
+    }
+}
+
+/*
+impl<St1, St2> Stream for Select<St1, St2>
+    where St1: Stream,
+          St2: Stream<Item = St1::Item>
+{
+    type Item = St1::Item;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<St1::Item>> {
+        let Select { flag, stream1, stream2 } =
+            unsafe { self.get_unchecked_mut() };
+        let stream1 = unsafe { Pin::new_unchecked(stream1) };
+        let stream2 = unsafe { Pin::new_unchecked(stream2) };
+
+        if !*flag {
+            poll_inner(flag, stream1, stream2, cx)
+        } else {
+            poll_inner(flag, stream2, stream1, cx)
+        }
+    }
+}*/
+struct BridgedStream {
+    streams: VecDeque<dyn Stream<Item = Result<Vec<Packet>, Error>>>
+}
+
+
+impl Stream for BridgedStream {
+    type Item = Result<Vec<Packet>, Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut this = unsafe { self.get_unchecked_mut() };
+        let size = this.streams.len();
+        let mut buffer = vec![];
+        for _ in 0..size {
+            let current_stream_option = this.streams.pop_front();
+            match current_stream_option {
+                Some(current_stream) => {
+                    let current_value = current_stream.poll_next();
+                    // match current_value {
+                    //     Poll::Pending => {
+        
+                    //     }
+                    //     _ => {
+        
+                    //     }
+                    // }
+                }
+                None => {
+
+                }
+
+
+            }
+
+        }
+        
+        Poll::Ready(None)
+
     }
 }
 
