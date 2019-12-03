@@ -123,32 +123,68 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = unsafe { self.get_unchecked_mut() };
-        let mut buffer: Vec<Packet> = vec![];
-
         let stream_size = this.streams.len();
-        for _ in 0..stream_size {
-            let current_stream_option = this.streams.pop_front();
-            match current_stream_option {
-                Some(mut current_stream) => {
-                    let current_value: Poll<Option<Result<Vec<Packet>, Error>>> = Pin::new(&mut current_stream).poll_next(cx);
-                    match current_value {
-                        Poll::Pending => {
-        
-                        }
-                        Poll::Ready(Some(Result::Ok(packets))) => {
-                            buffer.extend(packets);
-                        }
-                        _ => {}
-                    }
-                }
-                None => {
+        let mut interface_buffers: Vec<VecDeque<Packet>> = vec![VecDeque::new(); stream_size];
+
+        let stream_iter = this.streams.iter_mut().enumerate();
+
+        for (buffer_idx, mut stream) in stream_iter {
+            let current_value: Poll<Option<Result<Vec<Packet>, Error>>> = Pin::new(&mut stream).poll_next(cx);
+            match current_value {
+                Poll::Pending => {
+                    //do nothing and skip the population
 
                 }
+                Poll::Ready(Some(Result::Ok(packets))) => {
+                    interface_buffers[buffer_idx].extend(packets); //build the results for this run
+                }
+                Poll::Ready(Some(Result::Err(err))) => {
+                    return Poll::Ready(Some(Result::Err(err))); //if anything errors stop the stream
+                }
+                _ => {
+                    //TODO handle the None case from a stream... also use Streams Fused trait to prevent craziness
+                }
+            }
+        }
 
+        let mut canidate_buffer: Option<(VecDeque<Packet>, usize)> = Option::None;
+
+        for interface_buffer in interface_buffers.iter() {
+            match interface_buffers.get(0) {
+                Some(packet) => {
+                    //canidate_buffer = canidate_buffer.map(|current_buffer| if current.timestamp > packet.timestam)
+
+                }
+                _ => {
+
+                }
 
             }
 
+
         }
+        
+        // for buffer_idx in 0..stream_size {
+        //     let current_stream_option = this.streams.pop_front();
+        //     match current_stream_option {
+        //         Some(mut current_stream) => {
+        //             let current_value: Poll<Option<Result<Vec<Packet>, Error>>> = Pin::new(&mut current_stream).poll_next(cx);
+        //             match current_value {
+        //                 Poll::Pending => {
+        
+        //                 }
+        //                 Poll::Ready(Some(Result::Ok(packets))) => {
+        //                     interface_buffers[buffer_idx].extend(packets);
+        //                 }
+        //                 _ => {}
+        //             }
+        //         }
+        //         None => {
+
+        //         }
+
+        //     }
+        // }
         
         Poll::Ready(None)
 
