@@ -124,12 +124,11 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = unsafe { self.get_unchecked_mut() };
         let size = this.streams.len();
-        let mut buffer = vec![];
+        let mut buffer: Vec<Packet> = vec![];
         for _ in 0..size {
             let current_stream_option = this.streams.pop_front();
             match current_stream_option {
                 Some(mut current_stream) => {
-                    let blah = current_stream.size_hint();
                     let current_value = Pin::new(&mut current_stream).poll_next(cx);
                     // match current_value {
                     //     Poll::Pending => {
