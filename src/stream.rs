@@ -112,12 +112,12 @@ impl<St1, St2> Stream for Select<St1, St2>
         }
     }
 }*/
-struct BridgedStream {
-    streams: VecDeque<dyn Stream<Item = Result<Vec<Packet>, Error>>>
+struct BridgedStream<St> {
+    streams: VecDeque<St>
 }
 
 
-impl Stream for BridgedStream {
+impl<St> Stream for BridgedStream<St> where St: Stream<Item = Result<Vec<Packet>, Error>> {
     type Item = Result<Vec<Packet>, Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
