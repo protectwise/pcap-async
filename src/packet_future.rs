@@ -63,7 +63,7 @@ impl Future for PacketFuture {
                 Some(p) => {
                     trace!("Checking if delay is ready");
                     let pinned = unsafe { Pin::new_unchecked(p) };
-                    futures::ready!(pinned.poll(cx));
+                    futures::ready!(pinned.poll(cx)); //ready will return so if we are waiting we won't get passed this point.
                     debug!("Delay complete");
                     *this.pending = None;
                 }
@@ -91,31 +91,15 @@ impl Future for PacketFuture {
                             error!("Error encountered when calling pcap_dispatch: {}", err);
                             return Poll::Ready(Err(err));
                         }
-                        0 => {
-                            if packets.is_empty() {
-                                debug!("No packets read, delaying to retry");
-
-                                *this.pending = Some(tokio_timer::delay_for(*this.delay));
-                            } else {
-                                if !*this.live_capture {
-                                    debug!("Not live capture, calling breakloop");
-                                    unsafe {
-                                        pcap_sys::pcap_breakloop(this.pcap_handle.as_mut_ptr())
-                                    }
-                                }
-                                trace!("Capture loop captured {} available packets", packets.len());
-                                return Poll::Ready(Ok(Some(packets)));
-                            }
-                        }
-                        x if x > 0 => {
+                        x if x >= 0 => {
                             trace!("Capture loop captured {} packets", x);
-                            if packets.len() >= *this.max_packets_read {
-                                debug!(
-                                    "Capture loop captured up to maximum packets of {}",
-                                    this.max_packets_read
-                                );
-                                return Poll::Ready(Ok(Some(packets)));
+                            if x == 0 && !*this.live_capture {
+                                debug!("Not live capture, calling breakloop");
+                                unsafe {
+                                    pcap_sys::pcap_breakloop(this.pcap_handle.as_mut_ptr())
+                                }
                             }
+                            return Poll::Ready(Ok(Some(packets)));
                         }
                         _ => {
                             let err = crate::pcap_util::convert_libpcap_error(

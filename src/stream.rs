@@ -13,6 +13,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::SystemTime;
 
 pub struct PacketStream {
     config: Config,
@@ -89,29 +90,6 @@ impl Stream for PacketStream {
     }
 }
 
-/*
-impl<St1, St2> Stream for Select<St1, St2>
-    where St1: Stream,
-          St2: Stream<Item = St1::Item>
-{
-    type Item = St1::Item;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<St1::Item>> {
-        let Select { flag, stream1, stream2 } =
-            unsafe { self.get_unchecked_mut() };
-        let stream1 = unsafe { Pin::new_unchecked(stream1) };
-        let stream2 = unsafe { Pin::new_unchecked(stream2) };
-
-        if !*flag {
-            poll_inner(flag, stream1, stream2, cx)
-        } else {
-            poll_inner(flag, stream2, stream1, cx)
-        }
-    }
-}*/
 struct BridgedStream<St>
 {
     streams: VecDeque<St>,
@@ -126,6 +104,7 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
         let this = unsafe { self.get_unchecked_mut() };
         let stream_size = this.streams.len();
         let mut buffer: Vec<Packet> = vec![];
+        let mut max_per_buffer: Vec<Option<SystemTime>> = vec![None; stream_size];
 
         //TODO need to impliment the min of max per buffer and store the overflow elsewhere
 
@@ -139,6 +118,8 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
 
                 }
                 Poll::Ready(Some(Result::Ok(packets))) => {
+                    let max_packet_timestamp = packets.get(packets.len() - 1).map(|packet| packet.timestamp()).unwrap_or(&SystemTime::UNIX_EPOCH);
+                    max_per_buffer[buffer_idx] = Some(max_packet_timestamp.clone());
                     buffer.extend(packets); //build the results for this run
                 }
                 Poll::Ready(Some(Result::Err(err))) => {
