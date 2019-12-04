@@ -15,6 +15,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::SystemTime;
 
+use tokio_timer::Delay;
+
 pub struct PacketStream {
     config: Config,
     handle: Arc<Handle>,
@@ -92,31 +94,86 @@ impl Stream for PacketStream {
 
 struct BridgedStream<St>
 {
-    streams: VecDeque<St>,
-    completed: usize,
+    delay: std::time::Duration,
+    streams: Vec<St>,
+    buffers: Vec<Vec<Packet>>,
     pending: Option<Delay>
 }
 
 
-impl<St: Future<Output = Result<Option<Vec<Packet>>, Error>> + Unpin> Stream for BridgedStream<St> { //where St: Stream<Item = Result<Vec<Packet>, Error>> {
+impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedStream<St> { //where St: Stream<Item = Result<Vec<Packet>, Error>> {
     type Item = Result<Vec<Packet>, Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = unsafe { self.get_unchecked_mut() };
-        let stream_size = this.streams.len();
-        let mut buffer: Vec<Packet> = vec![];
-        let mut max_per_buffer: Vec<Option<SystemTime>> = vec![None; stream_size];
+        let stream_iter = this.streams.iter_mut().enumerate();
 
-        match this.pending {
+        match &mut this.pending {
             Some(p) => {
                 trace!("Checking if delay is ready");
-                let pinned = unsafe { Pin::new_unchecked(p) };
-                futures::ready!(pinned.poll(cx)); //this macros will short circuit at this point if the future is not reaady
+                //let pinned = unsafe { Pin::new_unchecked(p) };
+                for (buffer_idx, mut stream) in stream_iter {
+                    let current_value: Poll<Option<Result<Vec<Packet>, Error>>> = Pin::new(&mut stream).poll_next(cx);
+                    match current_value {
+                        Poll::Pending => {
+                            //do nothing and skip the population
+        
+                        }
+                        Poll::Ready(Some(Result::Ok(packets))) => {
+                            match this.buffers.get_mut(buffer_idx) {
+                                Some(existing) => {
+                                    existing.extend(packets);
+                                }
+                                None => {
+                                    this.buffers[buffer_idx] = packets;
+                                }
+                            }
+                        }
+                        Poll::Ready(Some(Result::Err(err))) => {
+                            return Poll::Ready(Some(Result::Err(err))); //if anything errors stop the stream
+                        }
+                        Poll::Ready(None) => {
+                            // this.completed += 1;
+                            // if this.completed == stream_size {
+                            //     return Poll::Ready(None);
+                            // }
+                        }
+                    }
+                }
+                let polled = Pin::new( p).poll(cx);
+                futures::ready!(polled);
                 debug!("Delay complete");
-                *this.pending = None;
+                this.pending = None
+
             }
-            case None =>
+            None => {
+                this.pending = Some(tokio_timer::delay_for(this.delay));
+
+            }
         }
+
+     
+
+
+
+
+        // let mut buffer: Vec<Vec<Packet>> = vec![vec![]; streams.len()];
+        // let mut max_per_buffer: Vec<Option<SystemTime>> = vec![None; stream_size];
+
+        // match this.pending {
+        //     Some(p) => {
+        //         trace!("Checking if delay is ready");
+        //         let pinned = unsafe { Pin::new_unchecked(p) };
+        //         for (buffer_idx, mut stream) in stream_iter {
+        //         }
+                
+
+        //         futures::ready!(pinned.poll(cx)); //this macros will short circuit at this point if the future is not reaady
+        //         debug!("Delay complete");
+        //         *this.pending = None;
+        //     }
+        //     case None =>
+        // }
 
         // //TODO need to impliment the min of max per buffer and store the overflow elsewhere
 
