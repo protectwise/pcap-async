@@ -122,7 +122,7 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
     type Item = Result<Vec<Packet>, Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut this = unsafe { self.get_unchecked_mut() };
+        let this = unsafe { self.get_unchecked_mut() };
         let stream_size = this.streams.len();
         let mut interface_buffers: Vec<VecDeque<Packet>> = vec![VecDeque::new(); stream_size];
 
@@ -147,21 +147,28 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
             }
         }
 
-        let mut canidate_buffer: Option<(VecDeque<Packet>, usize)> = Option::None;
+        while !interface_buffers.is_empty() {
+            let mut canidate_buffer: Option<(&VecDeque<Packet>, std::time::SystemTime)> = Option::None;
 
-        for interface_buffer in interface_buffers.iter() {
-            match interface_buffers.get(0) {
-                Some(packet) => {
-                    //canidate_buffer = canidate_buffer.map(|current_buffer| if current.timestamp > packet.timestam)
+            for interface_buffer in interface_buffers.iter() {
+                match interface_buffer.get(0) {
+                    Some(packet) => {
+                        let packet_ts = *packet.timestamp();
+
+                        canidate_buffer = canidate_buffer.map(|(current_buffer, ts)| {
+                            if ts > packet_ts { //if the cannidate timestamp is greater than the current timestamp replace the canidate timestamp
+                                (interface_buffer, packet_ts)
+                            } else {
+                                (current_buffer, ts)
+                            }
+                        });
+                    }
+                    _ => {
+
+                    }
 
                 }
-                _ => {
-
-                }
-
             }
-
-
         }
         
         // for buffer_idx in 0..stream_size {
