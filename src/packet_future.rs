@@ -35,8 +35,7 @@ pub struct PacketFuture {
     pcap_handle: Arc<Handle>,
     delay: std::time::Duration,
     max_packets_read: usize,
-    live_capture: bool,
-    pending: Option<Delay>,
+    live_capture: bool
 }
 
 impl PacketFuture {
@@ -45,8 +44,7 @@ impl PacketFuture {
             pcap_handle: Arc::clone(handle),
             delay: config.retry_after().clone(),
             max_packets_read: config.max_packets_read(),
-            live_capture: handle.is_live_capture(),
-            pending: None,
+            live_capture: handle.is_live_capture()
         }
     }
 }
@@ -59,56 +57,45 @@ impl Future for PacketFuture {
         let mut packets = vec![];
 
         while !this.pcap_handle.interrupted() {
-            match this.pending {
-                Some(p) => {
-                    trace!("Checking if delay is ready");
-                    let pinned = unsafe { Pin::new_unchecked(p) };
-                    futures::ready!(pinned.poll(cx)); //ready will return so if we are waiting we won't get passed this point.
-                    debug!("Delay complete");
-                    *this.pending = None;
+            let ret_code = unsafe {
+                pcap_sys::pcap_dispatch(
+                    this.pcap_handle.as_mut_ptr(),
+                    -1,
+                    Some(dispatch_callback),
+                    &mut packets as *mut Vec<Packet> as *mut u8,
+                )
+            };
+
+            debug!("Dispatch returned with {}", ret_code);
+
+            match ret_code {
+                -2 => {
+                    debug!("Pcap breakloop invoked");
+                    return Poll::Ready(Ok(None));
                 }
-                None => {
-                    let ret_code = unsafe {
-                        pcap_sys::pcap_dispatch(
-                            this.pcap_handle.as_mut_ptr(),
-                            -1,
-                            Some(dispatch_callback),
-                            &mut packets as *mut Vec<Packet> as *mut u8,
-                        )
-                    };
-
-                    debug!("Dispatch returned with {}", ret_code);
-
-                    match ret_code {
-                        -2 => {
-                            debug!("Pcap breakloop invoked");
-                            return Poll::Ready(Ok(None));
-                        }
-                        -1 => {
-                            let err = crate::pcap_util::convert_libpcap_error(
-                                this.pcap_handle.as_mut_ptr(),
-                            );
-                            error!("Error encountered when calling pcap_dispatch: {}", err);
-                            return Poll::Ready(Err(err));
-                        }
-                        x if x >= 0 => {
-                            trace!("Capture loop captured {} packets", x);
-                            if x == 0 && !*this.live_capture {
-                                debug!("Not live capture, calling breakloop");
-                                unsafe {
-                                    pcap_sys::pcap_breakloop(this.pcap_handle.as_mut_ptr())
-                                }
-                            }
-                            return Poll::Ready(Ok(Some(packets)));
-                        }
-                        _ => {
-                            let err = crate::pcap_util::convert_libpcap_error(
-                                this.pcap_handle.as_mut_ptr(),
-                            );
-                            error!("Pcap dispatch returned {}: {:?}", ret_code, err);
-                            return Poll::Ready(Err(err));
+                -1 => {
+                    let err = crate::pcap_util::convert_libpcap_error(
+                        this.pcap_handle.as_mut_ptr(),
+                    );
+                    error!("Error encountered when calling pcap_dispatch: {}", err);
+                    return Poll::Ready(Err(err));
+                }
+                x if x >= 0 => {
+                    trace!("Capture loop captured {} packets", x);
+                    if x == 0 && !*this.live_capture {
+                        debug!("Not live capture, calling breakloop");
+                        unsafe {
+                            pcap_sys::pcap_breakloop(this.pcap_handle.as_mut_ptr())
                         }
                     }
+                    return Poll::Ready(Ok(Some(packets)));
+                }
+                _ => {
+                    let err = crate::pcap_util::convert_libpcap_error(
+                        this.pcap_handle.as_mut_ptr(),
+                    );
+                    error!("Pcap dispatch returned {}: {:?}", ret_code, err);
+                    return Poll::Ready(Err(err));
                 }
             }
         }

@@ -93,11 +93,12 @@ impl Stream for PacketStream {
 struct BridgedStream<St>
 {
     streams: VecDeque<St>,
-    completed: usize
+    completed: usize,
+    pending: Option<Delay>
 }
 
 
-impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedStream<St> { //where St: Stream<Item = Result<Vec<Packet>, Error>> {
+impl<St: Future<Output = Result<Option<Vec<Packet>>, Error>> + Unpin> Stream for BridgedStream<St> { //where St: Stream<Item = Result<Vec<Packet>, Error>> {
     type Item = Result<Vec<Packet>, Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -106,35 +107,46 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
         let mut buffer: Vec<Packet> = vec![];
         let mut max_per_buffer: Vec<Option<SystemTime>> = vec![None; stream_size];
 
-        //TODO need to impliment the min of max per buffer and store the overflow elsewhere
-
-        let stream_iter = this.streams.iter_mut().enumerate();
-
-        for (buffer_idx, mut stream) in stream_iter {
-            let current_value: Poll<Option<Result<Vec<Packet>, Error>>> = Pin::new(&mut stream).poll_next(cx);
-            match current_value {
-                Poll::Pending => {
-                    //do nothing and skip the population
-
-                }
-                Poll::Ready(Some(Result::Ok(packets))) => {
-                    let max_packet_timestamp = packets.get(packets.len() - 1).map(|packet| packet.timestamp()).unwrap_or(&SystemTime::UNIX_EPOCH);
-                    max_per_buffer[buffer_idx] = Some(max_packet_timestamp.clone());
-                    buffer.extend(packets); //build the results for this run
-                }
-                Poll::Ready(Some(Result::Err(err))) => {
-                    return Poll::Ready(Some(Result::Err(err))); //if anything errors stop the stream
-                }
-                Poll::Ready(None) => {
-                    this.completed += 1;
-                    if this.completed == stream_size {
-                        return Poll::Ready(None);
-                    }
-                }
+        match this.pending {
+            Some(p) => {
+                trace!("Checking if delay is ready");
+                let pinned = unsafe { Pin::new_unchecked(p) };
+                futures::ready!(pinned.poll(cx)); //this macros will short circuit at this point if the future is not reaady
+                debug!("Delay complete");
+                *this.pending = None;
             }
+            case None =>
         }
 
-        buffer.sort();
+        // //TODO need to impliment the min of max per buffer and store the overflow elsewhere
+
+        // let stream_iter = this.streams.iter_mut().enumerate();
+
+        // for (buffer_idx, mut stream) in stream_iter {
+        //     let current_value: Poll<Option<Result<Vec<Packet>, Error>>> = Pin::new(&mut stream).poll_next(cx);
+        //     match current_value {
+        //         Poll::Pending => {
+        //             //do nothing and skip the population
+
+        //         }
+        //         Poll::Ready(Some(Result::Ok(packets))) => {
+        //             let max_packet_timestamp = packets.get(packets.len() - 1).map(|packet| packet.timestamp()).unwrap_or(&SystemTime::UNIX_EPOCH);
+        //             max_per_buffer[buffer_idx] = Some(max_packet_timestamp.clone());
+        //             buffer.extend(packets); //build the results for this run
+        //         }
+        //         Poll::Ready(Some(Result::Err(err))) => {
+        //             return Poll::Ready(Some(Result::Err(err))); //if anything errors stop the stream
+        //         }
+        //         Poll::Ready(None) => {
+        //             this.completed += 1;
+        //             if this.completed == stream_size {
+        //                 return Poll::Ready(None);
+        //             }
+        //         }
+        //     }
+        // }
+
+        // buffer.sort();
 
  
         
