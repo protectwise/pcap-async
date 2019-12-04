@@ -3,13 +3,34 @@ use crate::Error;
 use byteorder::{ByteOrder, WriteBytesExt};
 use futures::AsyncWriteExt;
 use std::io::Cursor;
+use std::cmp::Ordering;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq)]
 pub struct Packet {
     timestamp: std::time::SystemTime,
     actual_length: u32,
     original_length: u32,
     data: Vec<u8>,
+}
+
+impl PartialEq for Packet {
+    fn eq(&self, other: &Self) -> bool {
+        self.timestamp() == other.timestamp()
+    }
+}
+
+impl PartialOrd for Packet {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+//impl Eq for Packet {}
+
+impl Ord for Packet {
+    fn cmp(&self, other: &Self) -> Ordering {
+        return self.timestamp().cmp(other.timestamp());
+    }
 }
 
 impl Packet {

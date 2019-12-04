@@ -114,7 +114,8 @@ impl<St1, St2> Stream for Select<St1, St2>
 }*/
 struct BridgedStream<St>
 {
-    streams: VecDeque<St>
+    streams: VecDeque<St>,
+    completed: usize
 }
 
 
@@ -124,7 +125,9 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = unsafe { self.get_unchecked_mut() };
         let stream_size = this.streams.len();
-        let mut interface_buffers: Vec<VecDeque<Packet>> = vec![VecDeque::new(); stream_size];
+        let mut buffer: Vec<Packet> = vec![];
+
+        //TODO need to impliment the min of max per buffer and store the overflow elsewhere
 
         let stream_iter = this.streams.iter_mut().enumerate();
 
@@ -136,62 +139,23 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
 
                 }
                 Poll::Ready(Some(Result::Ok(packets))) => {
-                    interface_buffers[buffer_idx].extend(packets); //build the results for this run
+                    buffer.extend(packets); //build the results for this run
                 }
                 Poll::Ready(Some(Result::Err(err))) => {
                     return Poll::Ready(Some(Result::Err(err))); //if anything errors stop the stream
                 }
-                _ => {
-                    //TODO handle the None case from a stream... also use Streams Fused trait to prevent craziness
+                Poll::Ready(None) => {
+                    this.completed += 1;
+                    if this.completed == stream_size {
+                        return Poll::Ready(None);
+                    }
                 }
             }
         }
 
-        while !interface_buffers.is_empty() {
-            let mut canidate_buffer: Option<(&VecDeque<Packet>, std::time::SystemTime)> = Option::None;
+        buffer.sort();
 
-            for interface_buffer in interface_buffers.iter() {
-                match interface_buffer.get(0) {
-                    Some(packet) => {
-                        let packet_ts = *packet.timestamp();
-
-                        canidate_buffer = canidate_buffer.map(|(current_buffer, ts)| {
-                            if ts > packet_ts { //if the cannidate timestamp is greater than the current timestamp replace the canidate timestamp
-                                (interface_buffer, packet_ts)
-                            } else {
-                                (current_buffer, ts)
-                            }
-                        });
-                    }
-                    _ => {
-
-                    }
-
-                }
-            }
-        }
-        
-        // for buffer_idx in 0..stream_size {
-        //     let current_stream_option = this.streams.pop_front();
-        //     match current_stream_option {
-        //         Some(mut current_stream) => {
-        //             let current_value: Poll<Option<Result<Vec<Packet>, Error>>> = Pin::new(&mut current_stream).poll_next(cx);
-        //             match current_value {
-        //                 Poll::Pending => {
-        
-        //                 }
-        //                 Poll::Ready(Some(Result::Ok(packets))) => {
-        //                     interface_buffers[buffer_idx].extend(packets);
-        //                 }
-        //                 _ => {}
-        //             }
-        //         }
-        //         None => {
-
-        //         }
-
-        //     }
-        // }
+ 
         
         Poll::Ready(None)
 
