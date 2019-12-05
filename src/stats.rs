@@ -5,6 +5,8 @@ pub struct Stats {
     pub dropped_by_interface: u32,
 }
 
+pub const EMPTY: Stats = Stats{ received: 0, dropped_by_kernel: 0, dropped_by_interface: 0 };
+
 impl Stats {
     fn combine(&self, other: &Stats) -> Stats {
         Stats {
@@ -13,5 +15,4 @@ impl Stats {
             dropped_by_interface: self.dropped_by_interface + other.dropped_by_interface
         }
     }
-
 }
