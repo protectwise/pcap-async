@@ -97,7 +97,40 @@ struct BridgedStream<St>
     delay: std::time::Duration,
     streams: Vec<St>,
     buffers: Vec<Vec<Packet>>,
-    pending: Option<Delay>
+    pending: Option<Delay>,
+    roll_over: Vec<Packet>
+}
+//#![feature(drain_filter)]
+impl <St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> BridgedStream<St> {
+
+    // fn determine_min_max(buffers: &mut Vec<Vec<Packet>>) -> Option<&SystemTime> {
+    //     let mut min_max_opt: Option<&SystemTime> = Option::None;
+    //     for buf in buffers.iter() {
+    //         let last_opt = buf.get(buf.len() - 1);
+    //         min_max = last_opt.and_then(|last| {
+    //             match min_max {
+    //                 Some(prev) if last.timestamp() > prev => {
+    //                     Some(prev)
+    //                 }
+    //                 None => {
+    //                     Some(last.timestamp())
+    //                 }
+    //                 Some(prev) => {
+    //                     Some(prev)
+    //                 }
+    //             }
+    //         })
+    //     }
+    //     match min_max_opt {
+    //         Some(min_max) => {
+    //             for buf in buffers.iter_mut() {
+    //                 buf.drain_filter(|packet| packet.timestamp() > min_max)
+    //             }
+
+    //         }
+    //     }
+    //     min_max
+    // }
 }
 
 
@@ -106,7 +139,9 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = unsafe { self.get_unchecked_mut() };
+        //let min_max = this.clone().determine_min_max();
         let stream_iter = this.streams.iter_mut().enumerate();
+
 
         match &mut this.pending {
             Some(p) => {
@@ -147,6 +182,8 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
 
             }
             None => {
+                //let min_max = BridgedStream::<St>::determine_min_max(&mut this.buffers);
+                
                 this.pending = Some(tokio_timer::delay_for(this.delay));
 
             }
