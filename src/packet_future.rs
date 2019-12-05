@@ -41,6 +41,7 @@ pub struct PacketFuture {
 
 impl PacketFuture {
     pub fn new(config: &Config, handle: &Arc<Handle>) -> PacketFuture {
+        trace!("Creating new packet future");
         PacketFuture {
             pcap_handle: Arc::clone(handle),
             max_packets_read: config.max_packets_read(),
@@ -80,7 +81,7 @@ fn dispatch(pcap_handle: Arc<Handle>, live_capture: bool, max_packets_read: usiz
                 }
                 0 => {
                     if packets.is_empty() {
-                        debug!("No packets in buffer");
+                        trace!("No packets in buffer");
                         return Ok(Some(vec![]))
                     } else {
                         if !live_capture {
@@ -131,14 +132,16 @@ impl Future for PacketFuture {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
 
-        let mut f = this.outstanding.take().unwrap_or(dispatch(this.pcap_handle.clone(), *this.live_capture, *this.max_packets_read));
+        let mut f = this.outstanding.take().unwrap_or_else(|| dispatch(this.pcap_handle.clone(), *this.live_capture, *this.max_packets_read));
 
         match Pin::new(&mut f).poll(cx) {
             Poll::Pending => {
                 *this.outstanding = Some(f);
                 Poll::Pending
             }
-            Poll::Ready(r) => Poll::Ready(r),
+            Poll::Ready(r) => {
+                Poll::Ready(r)
+            },
         }
     }
 }
