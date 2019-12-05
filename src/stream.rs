@@ -11,10 +11,12 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use tokio_timer::Delay;
 
 pub struct PacketStream {
     config: Config,
     handle: Arc<Handle>,
+    delaying: Option<Delay>,
     pending: Option<PacketFuture>,
 }
 
@@ -40,6 +42,7 @@ impl PacketStream {
         Ok(PacketStream {
             config: config,
             handle: handle,
+            delaying: None,
             pending: None,
         })
     }
@@ -49,31 +52,40 @@ impl Stream for PacketStream {
     type Item = Result<Vec<Packet>, Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let Self {
-            config,
-            handle,
-            pending,
-        } = unsafe { self.get_unchecked_mut() };
+        let this = self.project();
 
-        if pending.is_none() {
-            *pending = Some(PacketFuture::new(config, handle))
+        let mut was_delayed = false;
+        if let Some(mut existing_delay) = this.delaying.take() {
+            if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
+                *this.delaying = Some(existing_delay);
+                return Poll::Pending;
+            }
+            was_delayed = true;
         }
-        let p = pending.as_mut().unwrap();
-        let pin_pending = unsafe { Pin::new_unchecked(p) };
-        let packets = futures::ready!(pin_pending.poll(cx));
-        *pending = None;
-        let r = match packets {
-            Err(e) => Some(Err(e)),
-            Ok(None) => {
-                debug!("Pcap stream complete");
-                None
+
+        let mut existing_future = this.pending.take().unwrap_or(PacketFuture::new(this.config, &iface.handle));
+        match Pin::new(&mut existing_future).poll(cx) {
+            Poll::Pending => {
+                *this.pending = Some(existing_future);
+                Poll::Pending
             }
-            Ok(Some(p)) => {
-                debug!("Pcap stream produced {} packets", p.len());
-                Some(Ok(p))
+            Poll::Ready(Err(e)) => {
+                debug!("Stream encountered an error");
+                Poll::Ready(Some(Err(e)))
             }
-        };
-        Poll::Ready(r)
+            Poll::Ready(Ok(None)) => {
+                debug!("Stream was complete");
+                Poll::Ready(None)
+            }
+            Poll::Ready(Ok(Some(v))) => {
+                if v.is_empty() && !was_delayed {
+                    *this.delaying = Some(tokio_timer::delay_for(this.config.delay));
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Some(Ok(v)))
+                }
+            }
+        }
     }
 }
 
