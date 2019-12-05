@@ -20,6 +20,7 @@
 //! }
 #![deny(unused_must_use, unused_imports, bare_trait_objects)]
 #![allow(dead_code, unused_imports)]
+mod bridge_stream;
 pub mod bpf;
 mod config;
 mod errors;

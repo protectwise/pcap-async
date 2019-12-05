@@ -6,7 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio_timer::Delay;
+use tokio_executor::blocking::Blocking;
 
 extern "C" fn dispatch_callback(
     user: *mut u8,
@@ -33,98 +33,81 @@ extern "C" fn dispatch_callback(
 #[pin_project]
 pub struct PacketFuture {
     pcap_handle: Arc<Handle>,
-    delay: std::time::Duration,
     max_packets_read: usize,
     live_capture: bool,
-    pending: Option<Delay>,
+    outstanding: Option<Blocking<Result<Option<Vec<Packet>>, Error>>,
 }
 
 impl PacketFuture {
     pub fn new(config: &Config, handle: &Arc<Handle>) -> PacketFuture {
         PacketFuture {
             pcap_handle: Arc::clone(handle),
-            delay: config.retry_after().clone(),
             max_packets_read: config.max_packets_read(),
             live_capture: handle.is_live_capture(),
-            pending: None,
+            outstanding: None,
         }
     }
 }
 
-impl Future for PacketFuture {
-    type Output = Result<Option<Vec<Packet>>, Error>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-
+fn dispatch(pcap_handle: Arc<Handle>, max_packets_read: usize) -> Blocking<Result<Option<Vec<Packet>>, Error>> {
+    tokio_executor::blocking::run(move || {
         let mut packets = vec![];
 
-        while !this.pcap_handle.interrupted() {
-            match this.pending {
-                Some(p) => {
-                    trace!("Checking if delay is ready");
-                    let pinned = unsafe { Pin::new_unchecked(p) };
-                    futures::ready!(pinned.poll(cx));
-                    debug!("Delay complete");
-                    *this.pending = None;
+        while !pcap_handle.interrupted() {
+            let ret_code = unsafe {
+                pcap_sys::pcap_dispatch(
+                    pcap_handle.as_mut_ptr(),
+                    -1,
+                    Some(dispatch_callback),
+                    &mut packets as *mut Vec<Packet> as *mut u8,
+                )
+            };
+
+            debug!("Dispatch returned with {}", ret_code);
+
+            match ret_code {
+                -2 => {
+                    debug!("Pcap breakloop invoked");
+                    return Ok(None);
                 }
-                None => {
-                    let ret_code = unsafe {
-                        pcap_sys::pcap_dispatch(
-                            this.pcap_handle.as_mut_ptr(),
-                            -1,
-                            Some(dispatch_callback),
-                            &mut packets as *mut Vec<Packet> as *mut u8,
-                        )
-                    };
-
-                    debug!("Dispatch returned with {}", ret_code);
-
-                    match ret_code {
-                        -2 => {
-                            debug!("Pcap breakloop invoked");
-                            return Poll::Ready(Ok(None));
-                        }
-                        -1 => {
-                            let err = crate::pcap_util::convert_libpcap_error(
-                                this.pcap_handle.as_mut_ptr(),
-                            );
-                            error!("Error encountered when calling pcap_dispatch: {}", err);
-                            return Poll::Ready(Err(err));
-                        }
-                        0 => {
-                            if packets.is_empty() {
-                                debug!("No packets read, delaying to retry");
-
-                                *this.pending = Some(tokio_timer::delay_for(*this.delay));
-                            } else {
-                                if !*this.live_capture {
-                                    debug!("Not live capture, calling breakloop");
-                                    unsafe {
-                                        pcap_sys::pcap_breakloop(this.pcap_handle.as_mut_ptr())
-                                    }
-                                }
-                                trace!("Capture loop captured {} available packets", packets.len());
-                                return Poll::Ready(Ok(Some(packets)));
+                -1 => {
+                    let err = crate::pcap_util::convert_libpcap_error(
+                        pcap_handle.as_mut_ptr(),
+                    );
+                    error!("Error encountered when calling pcap_dispatch: {}", err);
+                    return Err(err);
+                }
+                0 => {
+                    if packets.is_empty() {
+                        debug!("No packets in buffer");
+                        return Ok(Some(vec![]))
+                    } else {
+                        if !*this.live_capture {
+                            debug!("Not live capture, calling breakloop");
+                            unsafe {
+                                pcap_sys::pcap_breakloop(this.pcap_handle.as_mut_ptr())
                             }
                         }
-                        x if x > 0 => {
-                            trace!("Capture loop captured {} packets", x);
-                            if packets.len() >= *this.max_packets_read {
-                                debug!(
-                                    "Capture loop captured up to maximum packets of {}",
-                                    this.max_packets_read
-                                );
-                                return Poll::Ready(Ok(Some(packets)));
-                            }
-                        }
-                        _ => {
-                            let err = crate::pcap_util::convert_libpcap_error(
-                                this.pcap_handle.as_mut_ptr(),
-                            );
-                            error!("Pcap dispatch returned {}: {:?}", ret_code, err);
-                            return Poll::Ready(Err(err));
-                        }
+                        trace!("Capture loop captured {} available packets", packets.len());
+                        return Ok(Some(packets));
                     }
+                }
+                x if x > 0 => {
+                    trace!("Capture loop captured {} packets", x);
+                    if packets.len() >= max_packets_read {
+                        debug!(
+                            "Capture loop captured up to maximum packets of {}",
+                            max_packets_read
+                        );
+                        return Ok(Some(packets));
+                    }
+                }
+                _ => {
+                    let err = crate::pcap_util::convert_libpcap_error(
+                        pcap_handle.as_mut_ptr(),
+                    );
+                    error!("Pcap dispatch returned {}: {:?}", ret_code, err);
+                    return Err(err);
                 }
             }
         }
@@ -137,6 +120,24 @@ impl Future for PacketFuture {
             Some(packets)
         };
 
-        return Poll::Ready(Ok(r));
+        return Ok(r);
+    })
+}
+
+impl Future for PacketFuture {
+    type Output = Result<Option<Vec<Packet>>, Error>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+
+        let mut f = this.outstanding.take().unwrap_or(dispatch(this.handle, this.config.max_packets_read));
+
+        match Pin::new(&mut f).poll(cx) {
+            Poll::Pending => {
+                *this.outstanding = Some(f);
+                Poll::Pending
+            }
+            Poll::Ready(r) => Poll::Ready(r),
+        }
     }
 }
