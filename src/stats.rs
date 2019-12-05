@@ -8,7 +8,7 @@ pub struct Stats {
 pub const EMPTY_STATS: Stats = Stats{ received: 0, dropped_by_kernel: 0, dropped_by_interface: 0 };
 
 impl Stats {
-    fn combine(&self, other: &Stats) -> Stats {
+    pub fn combine(&self, other: &Stats) -> Stats {
         Stats {
             received: self.received + other.received,
             dropped_by_kernel: self.dropped_by_kernel + other.dropped_by_kernel,
