@@ -33,7 +33,7 @@ mod stats;
 mod stream;
 
 pub use crate::{
-    config::Config, errors::Error, handle::Handle, info::Info, packet::Packet, stats::Stats,
+    config::Config, errors::Error, handle::Handle, info::Info, packet::Packet, stats::Stats, stats::EMPTY_STATS,
     stream::PacketStream,
     bridge_stream::BridgeStream
 };
