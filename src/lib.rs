@@ -35,6 +35,7 @@ mod stream;
 pub use crate::{
     config::Config, errors::Error, handle::Handle, info::Info, packet::Packet, stats::Stats,
     stream::PacketStream,
+    bridge_stream::BridgeStream
 };
 use failure::Fail;
 use log::*;
