@@ -196,25 +196,39 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
             }
             None => {
                 //let min_max = BridgedStream::<St>::determine_min_max(&mut this.buffers);
-                let max_iter = this.maxs.into_iter();
-                let mut min_max: Option<SystemTime> = None;
+                let max_iter = this.maxs.drain(..).flatten();//.flat_map(|opt| opt.iter());
+                let mut min_max_opt: Option<SystemTime> = None;
+
                 for max in max_iter {
-                    min_max = match min_max {
-                        Some(m) if max > m => {
+                    min_max_opt = match min_max_opt {
+                        Some(m) if max < m => {
                             Some(max)
                         }
-                        None =>
+                        Some(m) => {
+                            Some(m)
+                        }
+                        None => {
                             Some(max)
+                        }
                     }
-                    
                 }
                 
+                let min_max = min_max_opt.unwrap_or(SystemTime::UNIX_EPOCH);
+
+                let mut flattened_buffer: Vec<Packet> = this.buffers.drain(..).flatten().collect();
+                flattened_buffer.sort();
+
+                let (to_emit, to_keep): (Vec<Packet>, Vec<Packet>)  = flattened_buffer.drain(..).partition(|packet| {
+                    *packet.timestamp() < min_max
+                });
+
+                this.roll_over = to_keep;
                 this.pending = Some(tokio_timer::delay_for(this.delay));
+                return Poll::Ready(Some(Ok(to_emit)));
 
             }
         }
-
-        Poll::Ready(None)
+        Poll::Pending
 
     }
 }
