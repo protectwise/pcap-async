@@ -25,8 +25,6 @@ impl PartialOrd for Packet {
     }
 }
 
-//impl Eq for Packet {}
-
 impl Ord for Packet {
     fn cmp(&self, other: &Self) -> Ordering {
         return self.timestamp().cmp(other.timestamp());

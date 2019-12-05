@@ -98,6 +98,7 @@ struct BridgedStream<St>
     streams: Vec<St>,
     buffers: Vec<Vec<Packet>>,
     pending: Option<Delay>,
+    maxs: Vec<Option<SystemTime>>,
     roll_over: Vec<Packet>
 }
 //#![feature(drain_filter)]
@@ -131,6 +132,13 @@ impl <St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> BridgedStream<St> {
     //     }
     //     min_max
     // }
+
+    // fn set_min_max(&mut self, buffer_idx: usize, packets: &Vec<Packet>) {
+    //     // let this = unsafe { self.get_unchecked_mut() };
+    //     // for new_last in packets.last().iter() {
+    //     //     this.min_max[buffer_idx] = Some(*(*new_last).timestamp());
+    //     // }
+    // }
 }
 
 
@@ -155,6 +163,11 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
         
                         }
                         Poll::Ready(Some(Result::Ok(packets))) => {
+                            //set_min_max(buffer_idx, &packets);
+                            for new_last in packets.last().iter() { //todo move thisinto a method
+                                this.maxs[buffer_idx] = Some(*(*new_last).timestamp());
+                            }
+
                             match this.buffers.get_mut(buffer_idx) {
                                 Some(existing) => {
                                     existing.extend(packets);
@@ -183,67 +196,24 @@ impl<St: Stream<Item = Result<Vec<Packet>, Error>> + Unpin> Stream for BridgedSt
             }
             None => {
                 //let min_max = BridgedStream::<St>::determine_min_max(&mut this.buffers);
+                let max_iter = this.maxs.into_iter();
+                let mut min_max: Option<SystemTime> = None;
+                for max in max_iter {
+                    min_max = match min_max {
+                        Some(m) if max > m => {
+                            Some(max)
+                        }
+                        None =>
+                            Some(max)
+                    }
+                    
+                }
                 
                 this.pending = Some(tokio_timer::delay_for(this.delay));
 
             }
         }
 
-     
-
-
-
-
-        // let mut buffer: Vec<Vec<Packet>> = vec![vec![]; streams.len()];
-        // let mut max_per_buffer: Vec<Option<SystemTime>> = vec![None; stream_size];
-
-        // match this.pending {
-        //     Some(p) => {
-        //         trace!("Checking if delay is ready");
-        //         let pinned = unsafe { Pin::new_unchecked(p) };
-        //         for (buffer_idx, mut stream) in stream_iter {
-        //         }
-                
-
-        //         futures::ready!(pinned.poll(cx)); //this macros will short circuit at this point if the future is not reaady
-        //         debug!("Delay complete");
-        //         *this.pending = None;
-        //     }
-        //     case None =>
-        // }
-
-        // //TODO need to impliment the min of max per buffer and store the overflow elsewhere
-
-        // let stream_iter = this.streams.iter_mut().enumerate();
-
-        // for (buffer_idx, mut stream) in stream_iter {
-        //     let current_value: Poll<Option<Result<Vec<Packet>, Error>>> = Pin::new(&mut stream).poll_next(cx);
-        //     match current_value {
-        //         Poll::Pending => {
-        //             //do nothing and skip the population
-
-        //         }
-        //         Poll::Ready(Some(Result::Ok(packets))) => {
-        //             let max_packet_timestamp = packets.get(packets.len() - 1).map(|packet| packet.timestamp()).unwrap_or(&SystemTime::UNIX_EPOCH);
-        //             max_per_buffer[buffer_idx] = Some(max_packet_timestamp.clone());
-        //             buffer.extend(packets); //build the results for this run
-        //         }
-        //         Poll::Ready(Some(Result::Err(err))) => {
-        //             return Poll::Ready(Some(Result::Err(err))); //if anything errors stop the stream
-        //         }
-        //         Poll::Ready(None) => {
-        //             this.completed += 1;
-        //             if this.completed == stream_size {
-        //                 return Poll::Ready(None);
-        //             }
-        //         }
-        //     }
-        // }
-
-        // buffer.sort();
-
- 
-        
         Poll::Ready(None)
 
     }
