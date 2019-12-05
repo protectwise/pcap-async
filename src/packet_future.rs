@@ -6,6 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use tokio_executor::blocking::Blocking;
 
 extern "C" fn dispatch_callback(
@@ -35,7 +36,7 @@ pub struct PacketFuture {
     pcap_handle: Arc<Handle>,
     max_packets_read: usize,
     live_capture: bool,
-    outstanding: Option<Blocking<Result<Option<Vec<Packet>>, Error>>,
+    outstanding: Option<Blocking<Result<Option<Vec<Packet>>, Error>>>,
 }
 
 impl PacketFuture {
@@ -49,7 +50,7 @@ impl PacketFuture {
     }
 }
 
-fn dispatch(pcap_handle: Arc<Handle>, max_packets_read: usize) -> Blocking<Result<Option<Vec<Packet>>, Error>> {
+fn dispatch(pcap_handle: Arc<Handle>, live_capture: bool, max_packets_read: usize) -> Blocking<Result<Option<Vec<Packet>>, Error>> {
     tokio_executor::blocking::run(move || {
         let mut packets = vec![];
 
@@ -82,10 +83,10 @@ fn dispatch(pcap_handle: Arc<Handle>, max_packets_read: usize) -> Blocking<Resul
                         debug!("No packets in buffer");
                         return Ok(Some(vec![]))
                     } else {
-                        if !*this.live_capture {
+                        if !live_capture {
                             debug!("Not live capture, calling breakloop");
                             unsafe {
-                                pcap_sys::pcap_breakloop(this.pcap_handle.as_mut_ptr())
+                                pcap_sys::pcap_breakloop(pcap_handle.as_mut_ptr())
                             }
                         }
                         trace!("Capture loop captured {} available packets", packets.len());
@@ -130,7 +131,7 @@ impl Future for PacketFuture {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
 
-        let mut f = this.outstanding.take().unwrap_or(dispatch(this.handle, this.config.max_packets_read));
+        let mut f = this.outstanding.take().unwrap_or(dispatch(this.pcap_handle.clone(), *this.live_capture, *this.max_packets_read));
 
         match Pin::new(&mut f).poll(cx) {
             Poll::Pending => {

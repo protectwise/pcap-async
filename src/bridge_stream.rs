@@ -66,29 +66,6 @@ impl BridgeStream {
             interfaces: interfaces,
         })
     }
-
-    pub fn gather_packets(&mut self, gather_to: Option<SystemTime>) -> Vec<Packet> {
-        let mut to_sort = vec![];
-        for iface in self.interfaces.iter_mut() {
-            let v = std::mem::replace(&mut iface.existing, vec![]);
-            to_sort.extend(v);
-        }
-        if let Some(ts) = gather_to {
-            for iface in self.interfaces.iter_mut() {
-                let (before_ts, after_ts) = iface.current.into_iter().partition(|p| {
-                    *p.timestamp() < ts
-                });
-                to_sort.extend(before_ts);
-                iface.existing = after_ts;
-            }
-        } else {
-            for iface in self.interfaces.iter_mut() {
-                std::mem::swap(&mut iface.existing, &mut iface.current);
-            }
-        }
-        to_sort.sort_by_key(|p| p.timestamp());
-        to_sort
-    }
 }
 
 impl Stream for BridgeStream {
@@ -98,11 +75,12 @@ impl Stream for BridgeStream {
         let this = self.project();
         let mut items_remaining = this.interfaces.len();
         let mut gather_to: Option<SystemTime> = None;
-        while let Some(iface) = this.interfaces.pop_front() {
+        while let Some(mut iface) = this.interfaces.pop_front() {
             let mut was_delayed = false;
             if let Some(mut existing_delay) = iface.delaying.take() {
                 if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
-                    *iface.delaying = Some(existing_delay);
+                    iface.delaying = Some(existing_delay);
+                    this.interfaces.push_front(iface);
                     return Poll::Pending;
                 }
                 was_delayed = true;
@@ -110,7 +88,7 @@ impl Stream for BridgeStream {
             let mut existing_future = iface.pending.take().unwrap_or(PacketFuture::new(this.config, &iface.handle));
             match Pin::new(&mut existing_future).poll(cx) {
                 Poll::Pending => {
-                    *iface.pending = Some(existing_future);
+                    iface.pending = Some(existing_future);
                     this.interfaces.push_front(iface);
                     return Poll::Pending;
                 }
@@ -122,14 +100,15 @@ impl Stream for BridgeStream {
                 }
                 Poll::Ready(Ok(Some(v))) => {
                     if v.is_empty() && !was_delayed {
-                        *iface.delaying = Some(tokio_timer::delay_for(this.config.delay));
+                        iface.delaying = Some(tokio_timer::delay_for(*this.config.retry_after()));
+                        this.interfaces.push_front(iface);
                         return Poll::Pending;
                     }
                     items_remaining -= 1;
                     if let Some(p) = v.last() {
                         gather_to = gather_to.map(|ts| {
                             std::cmp::min(ts, *p.timestamp())
-                        }).or_else(Some(*p.timestamp()));
+                        }).or(Some(*p.timestamp()));
                     }
                     iface.current.extend(v);
                     this.interfaces.push_back(iface);
@@ -139,7 +118,27 @@ impl Stream for BridgeStream {
                 break;
             }
         }
-        return Poll::Ready(this.gather_packets(gather_to))
+        let mut to_sort = vec![];
+        for iface in this.interfaces.iter_mut() {
+            let v = std::mem::replace(&mut iface.existing, vec![]);
+            to_sort.extend(v);
+        }
+        if let Some(ts) = gather_to {
+            for iface in this.interfaces.iter_mut() {
+                let current = std::mem::replace(&mut iface.current, vec![]);
+                let (before_ts, after_ts) = current.into_iter().partition(|p| {
+                    *p.timestamp() < ts
+                });
+                to_sort.extend(before_ts);
+                iface.existing = after_ts;
+            }
+        } else {
+            for iface in this.interfaces.iter_mut() {
+                std::mem::swap(&mut iface.existing, &mut iface.current);
+            }
+        }
+        to_sort.sort_by_key(|p| *p.timestamp());
+        return Poll::Ready(Some(Ok(to_sort)))
     }
 }
 

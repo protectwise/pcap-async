@@ -7,12 +7,14 @@ use crate::pcap_util;
 
 use futures::stream::{Stream, StreamExt};
 use log::*;
+use pin_project::pin_project;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio_timer::Delay;
 
+#[pin_project]
 pub struct PacketStream {
     config: Config,
     handle: Arc<Handle>,
@@ -63,7 +65,7 @@ impl Stream for PacketStream {
             was_delayed = true;
         }
 
-        let mut existing_future = this.pending.take().unwrap_or(PacketFuture::new(this.config, &iface.handle));
+        let mut existing_future = this.pending.take().unwrap_or(PacketFuture::new(this.config, &this.handle));
         match Pin::new(&mut existing_future).poll(cx) {
             Poll::Pending => {
                 *this.pending = Some(existing_future);
@@ -79,7 +81,7 @@ impl Stream for PacketStream {
             }
             Poll::Ready(Ok(Some(v))) => {
                 if v.is_empty() && !was_delayed {
-                    *this.delaying = Some(tokio_timer::delay_for(this.config.delay));
+                    *this.delaying = Some(tokio_timer::delay_for(*this.config.retry_after()));
                     Poll::Pending
                 } else {
                     Poll::Ready(Some(Ok(v)))
