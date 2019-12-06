@@ -79,7 +79,7 @@ fn gather_packets(
         let v = std::mem::replace(&mut iface.existing, vec![]);
         to_sort.extend(v);
     }
-    trace!("Have {} existing packets", to_sort.len());
+    debug!("Have {} existing packets", to_sort.len());
     if let Some(ts) = gather_to {
         for iface in interfaces.iter_mut() {
             let current = std::mem::replace(&mut iface.current, vec![]);
@@ -87,13 +87,13 @@ fn gather_packets(
                 *p.timestamp() < ts
             });
             let (before_ts, after_ts) = t;
-            trace!("Adding {} packets based on timestamp, {} packets adding to existing", before_ts.len(), after_ts.len());
+            debug!("Adding {} packets based on timestamp, {} packets adding to existing", before_ts.len(), after_ts.len());
             to_sort.extend(before_ts);
             iface.existing = after_ts;
         }
     } else {
         for iface in interfaces.iter_mut() {
-            trace!("Moving {} packets into existing", iface.current.len());
+            debug!("Moving {} packets into existing", iface.current.len());
             std::mem::swap(&mut iface.existing, &mut iface.current);
         }
     }
@@ -106,27 +106,45 @@ impl Stream for BridgeStream {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
-        let mut items_remaining = this.interfaces.len();
+        debug!("Interfaces: {:?}", this.interfaces.len());
+        let interfaces: &mut VecDeque<BridgedInterface> = this.interfaces;
+        let config: &mut Config = this.config; //TODO use the Self {} extractor
+
+        let mut items_remaining = interfaces.len();
         let mut gather_to: Option<SystemTime> = None;
-        while let Some(mut iface) = this.interfaces.pop_front() {
+        while let Some(mut iface) = interfaces.pop_front() {
+            let mut was_delayed = false;
+
+            if items_remaining == 0 {
+                interfaces.push_back(iface);
+                break;
+            }
+
+            let mut skip_iface = |iface: BridgedInterface| -> () {
+                interfaces.push_back(iface);
+                items_remaining -= 1;
+            };
+
             if iface.complete {
                 return Poll::Ready(None);
             }
-            let mut was_delayed = false;
-            if let Some(mut existing_delay) = iface.delaying.take() {
-                if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
+            if let Some(mut existing_delay) = iface.delaying.take() { //Check the interface for a delay..
+                if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) { //still delayed?
+                    debug!("Delaying");
                     iface.delaying = Some(existing_delay);
-                    this.interfaces.push_front(iface);
-                    return Poll::Pending;
+                    skip_iface(iface);
+                    continue; // do another iteration on another iface
                 }
                 was_delayed = true;
             }
-            let mut existing_future = iface.pending.take().unwrap_or_else(|| PacketFuture::new(this.config, &iface.handle));
+            let mut existing_future = iface.pending.take().unwrap_or_else(|| PacketFuture::new(config, &iface.handle));
             match Pin::new(&mut existing_future).poll(cx) {
                 Poll::Pending => {
+                    debug!("Pending");
                     iface.pending = Some(existing_future);
-                    this.interfaces.push_front(iface);
-                    return Poll::Pending;
+                    skip_iface(iface);
+                    continue;
+                    //return Poll::Pending;
                 }
                 Poll::Ready(Err(e)) => {
                     return Poll::Ready(Some(Err(e)));
@@ -134,8 +152,8 @@ impl Stream for BridgeStream {
                 Poll::Ready(Ok(None)) => {
                     debug!("Interface has completed");
                     iface.complete = true;
-                    this.interfaces.push_front(iface);
-                    let res = gather_packets(this.interfaces, gather_to);
+                    //interfaces.push_front(iface);
+                    let res = gather_packets(interfaces, gather_to);
                     if res.is_empty() {
                         return Poll::Ready(None);
                     } else {
@@ -144,9 +162,11 @@ impl Stream for BridgeStream {
                 }
                 Poll::Ready(Ok(Some(v))) => {
                     if v.is_empty() && !was_delayed {
-                        iface.delaying = Some(tokio_timer::delay_for(*this.config.retry_after()));
-                        this.interfaces.push_front(iface);
-                        return Poll::Pending;
+                        iface.delaying = Some(tokio_timer::delay_for(*config.retry_after()));
+                        //interfaces.push_front(iface);
+                        //return Poll::Pending;
+                        skip_iface(iface);
+                        continue;
                     }
                     items_remaining -= 1;
                     if let Some(p) = v.last() {
@@ -156,15 +176,12 @@ impl Stream for BridgeStream {
                     }
                     trace!("Adding {} packets to current", v.len());
                     iface.current.extend(v);
-                    this.interfaces.push_back(iface);
+                    interfaces.push_back(iface);
                 }
-            }
-            if items_remaining == 0 {
-                break;
             }
         }
 
-        let res = gather_packets(this.interfaces, gather_to);
+        let res = gather_packets(interfaces, gather_to);
         return Poll::Ready(Some(Ok(res)))
     }
 }
@@ -227,7 +244,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn packets_from_file_next() {
+    async fn packets_from_file_next_bridge() {
         let _ = env_logger::try_init();
 
         let pcap_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -245,6 +262,7 @@ mod tests {
             let mut packet_provider = packet_provider.boxed();
             let mut packets = vec![];
             while let Some(p) = packet_provider.next().await {
+                println!("packets returned {:?}", p);
                 packets.extend(p);
             }
             packets
@@ -262,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn packets_from_lookup() {
+    fn packets_from_lookup_bidge() {
         let _ = env_logger::try_init();
 
         let handle = Handle::lookup().expect("No handle created");
