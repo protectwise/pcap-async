@@ -110,20 +110,10 @@ impl Stream for BridgeStream {
         let interfaces: &mut VecDeque<BridgedInterface> = this.interfaces;
         let config: &mut Config = this.config; //TODO use the Self {} extractor
 
-        let mut items_remaining = interfaces.len();
+        //let mut items_remaining = interfaces.len();
         let mut gather_to: Option<SystemTime> = None;
-        while let Some(mut iface) = interfaces.pop_front() {
+        for iface in interfaces.iter_mut() {
             let mut was_delayed = false;
-
-            if items_remaining == 0 {
-                interfaces.push_back(iface);
-                break;
-            }
-
-            let mut skip_iface = |iface: BridgedInterface| -> () {
-                interfaces.push_back(iface);
-                items_remaining -= 1;
-            };
 
             if iface.complete {
                 return Poll::Ready(None);
@@ -132,7 +122,6 @@ impl Stream for BridgeStream {
                 if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) { //still delayed?
                     debug!("Delaying");
                     iface.delaying = Some(existing_delay);
-                    skip_iface(iface);
                     continue; // do another iteration on another iface
                 }
                 was_delayed = true;
@@ -142,7 +131,6 @@ impl Stream for BridgeStream {
                 Poll::Pending => {
                     debug!("Pending");
                     iface.pending = Some(existing_future);
-                    skip_iface(iface);
                     continue;
                     //return Poll::Pending;
                 }
@@ -165,10 +153,8 @@ impl Stream for BridgeStream {
                         iface.delaying = Some(tokio_timer::delay_for(*config.retry_after()));
                         //interfaces.push_front(iface);
                         //return Poll::Pending;
-                        skip_iface(iface);
                         continue;
                     }
-                    items_remaining -= 1;
                     if let Some(p) = v.last() {
                         gather_to = gather_to.map(|ts| {
                             std::cmp::min(ts, *p.timestamp())
@@ -176,7 +162,6 @@ impl Stream for BridgeStream {
                     }
                     trace!("Adding {} packets to current", v.len());
                     iface.current.extend(v);
-                    interfaces.push_back(iface);
                 }
             }
         }
