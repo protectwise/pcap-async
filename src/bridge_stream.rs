@@ -110,7 +110,6 @@ impl Stream for BridgeStream {
         let interfaces: &mut VecDeque<BridgedInterface> = this.interfaces;
         let config: &mut Config = this.config; //TODO use the Self {} extractor
 
-        //let mut items_remaining = interfaces.len();
         let mut gather_to: Option<SystemTime> = None;
         for iface in interfaces.iter_mut() {
             let mut was_delayed = false;
@@ -140,19 +139,17 @@ impl Stream for BridgeStream {
                 Poll::Ready(Ok(None)) => {
                     debug!("Interface has completed");
                     iface.complete = true;
-                    //interfaces.push_front(iface);
-                    let res = gather_packets(interfaces, gather_to);
-                    if res.is_empty() {
-                        return Poll::Ready(None);
-                    } else {
-                        return Poll::Ready(Some(Ok(res)));
-                    }
+                    continue;
+//                    let res = gather_packets(interfaces, gather_to);
+//                    if res.is_empty() {
+//                        return Poll::Ready(None);
+//                    } else {
+//                        return Poll::Ready(Some(Ok(res)));
+//                    }
                 }
                 Poll::Ready(Ok(Some(v))) => {
                     if v.is_empty() && !was_delayed {
                         iface.delaying = Some(tokio_timer::delay_for(*config.retry_after()));
-                        //interfaces.push_front(iface);
-                        //return Poll::Pending;
                         continue;
                     }
                     if let Some(p) = v.last() {
@@ -163,6 +160,22 @@ impl Stream for BridgeStream {
                     trace!("Adding {} packets to current", v.len());
                     iface.current.extend(v);
                 }
+            }
+        }
+
+        interfaces.retain(|iface| { //drop and complete interfaces
+            if iface.complete {
+                return false;
+            }
+            return true;
+        });
+
+        if interfaces.is_empty() {
+            let res = gather_packets(interfaces, gather_to);
+            if res.is_empty() {
+                return Poll::Ready(None);
+            } else {
+                return Poll::Ready(Some(Ok(res)));
             }
         }
 
