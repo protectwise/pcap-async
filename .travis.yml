@@ -18,11 +18,12 @@ matrix:
       env: TARGET=i686-unknown-linux-gnu
 
 before_script:
-  - cargo +nightly install --force rustfmt-nightly
+  - cargo +nightly install
+  #- cargo +nightly install --force rustfmt-nightly
 
 script:
   - export PATH="/usr/include:$PATH"
-  - cargo +nightly fmt --all -- --check
+  #- cargo +nightly fmt --all -- --check
   - cargo test
   - cargo doc --no-deps
 
