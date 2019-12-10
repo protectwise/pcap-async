@@ -140,12 +140,6 @@ impl Stream for BridgeStream {
                     debug!("Interface has completed");
                     iface.complete = true;
                     continue;
-//                    let res = gather_packets(interfaces, gather_to);
-//                    if res.is_empty() {
-//                        return Poll::Ready(None);
-//                    } else {
-//                        return Poll::Ready(Some(Ok(res)));
-//                    }
                 }
                 Poll::Ready(Ok(Some(v))) => {
                     if v.is_empty() && !was_delayed {
@@ -163,24 +157,17 @@ impl Stream for BridgeStream {
             }
         }
 
-        interfaces.retain(|iface| { //drop and complete interfaces
-            if iface.complete {
-                return false;
-            }
-            return true;
+        let res = gather_packets(interfaces, gather_to);
+
+        interfaces.retain(|iface| { //drop the complete interfaces
+            return !iface.complete;
         });
 
-        if interfaces.is_empty() {
-            let res = gather_packets(interfaces, gather_to);
-            if res.is_empty() {
-                return Poll::Ready(None);
-            } else {
-                return Poll::Ready(Some(Ok(res)));
-            }
+        if res.is_empty() {
+            return Poll::Ready(None);
+        } else {
+            return Poll::Ready(Some(Ok(res)));
         }
-
-        let res = gather_packets(interfaces, gather_to);
-        return Poll::Ready(Some(Ok(res)))
     }
 }
 
