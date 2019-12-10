@@ -18,7 +18,7 @@ matrix:
       env: TARGET=i686-unknown-linux-gnu
 
 before_script:
-  - cargo +nightly install
+  #- cargo +nightly install
   #- cargo +nightly install --force rustfmt-nightly
 
 script:
