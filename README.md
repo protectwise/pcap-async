@@ -24,7 +24,7 @@ First, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-channel-async = "0.1.0-alpha.1"
+pcap-async = "0.1"
 ```
 
 Next, add this to your crate:
@@ -36,7 +36,7 @@ use pcap_async::{Config, Handle, PacketStream};
 #[tokio::main]
 async fn main() {
     let handle = Handle::lookup().expect("No handle created");
-    let mut provider = PacketProvider::new(Config::default(), handle)
+    let mut provider = PacketStream::new(Config::default(), handle)
         .expect("Could not create provider")
         .fuse();
     while let Some(packets) = provider.next().await {

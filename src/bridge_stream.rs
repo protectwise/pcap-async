@@ -8,13 +8,13 @@ use crate::pcap_util;
 use futures::stream::{Stream, StreamExt};
 use log::*;
 use pin_project::pin_project;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::collections::VecDeque;
 use std::time::SystemTime;
-use tokio_timer::Delay;
+use tokio::time::Delay;
 
 struct BridgedInterface {
     handle: Arc<Handle>,
@@ -28,7 +28,7 @@ struct BridgedInterface {
 #[pin_project]
 pub struct BridgeStream {
     config: Config,
-    interfaces: VecDeque<BridgedInterface>
+    interfaces: VecDeque<BridgedInterface>,
 }
 
 impl BridgeStream {
@@ -83,11 +83,13 @@ fn gather_packets(
     if let Some(ts) = gather_to {
         for iface in interfaces.iter_mut() {
             let current = std::mem::replace(&mut iface.current, vec![]);
-            let t: (Vec<_>, Vec<_>) = current.into_iter().partition(|p| {
-                *p.timestamp() < ts
-            });
+            let t: (Vec<_>, Vec<_>) = current.into_iter().partition(|p| *p.timestamp() < ts);
             let (before_ts, after_ts) = t;
-            trace!("Adding {} packets based on timestamp, {} packets adding to existing", before_ts.len(), after_ts.len());
+            trace!(
+                "Adding {} packets based on timestamp, {} packets adding to existing",
+                before_ts.len(),
+                after_ts.len()
+            );
             to_sort.extend(before_ts);
             iface.existing = after_ts;
         }
@@ -117,15 +119,20 @@ impl Stream for BridgeStream {
             if iface.complete {
                 return Poll::Ready(None);
             }
-            if let Some(mut existing_delay) = iface.delaying.take() { //Check the interface for a delay..
-                if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) { //still delayed?
+            if let Some(mut existing_delay) = iface.delaying.take() {
+                //Check the interface for a delay..
+                if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
+                    //still delayed?
                     trace!("Delaying");
                     iface.delaying = Some(existing_delay);
                     continue; // do another iteration on another iface
                 }
                 was_delayed = true;
             }
-            let mut existing_future = iface.pending.take().unwrap_or_else(|| PacketFuture::new(config, &iface.handle));
+            let mut existing_future = iface
+                .pending
+                .take()
+                .unwrap_or_else(|| PacketFuture::new(config, &iface.handle));
             match Pin::new(&mut existing_future).poll(cx) {
                 Poll::Pending => {
                     trace!("Pending");
@@ -143,13 +150,13 @@ impl Stream for BridgeStream {
                 }
                 Poll::Ready(Ok(Some(v))) => {
                     if v.is_empty() && !was_delayed {
-                        iface.delaying = Some(tokio_timer::delay_for(*config.retry_after()));
+                        iface.delaying = Some(tokio::time::delay_for(*config.retry_after()));
                         continue;
                     }
                     if let Some(p) = v.last() {
-                        gather_to = gather_to.map(|ts| {
-                            std::cmp::min(ts, *p.timestamp())
-                        }).or(Some(*p.timestamp()));
+                        gather_to = gather_to
+                            .map(|ts| std::cmp::min(ts, *p.timestamp()))
+                            .or(Some(*p.timestamp()));
                     }
                     trace!("Adding {} packets to current", v.len());
                     iface.current.extend(v);
@@ -157,10 +164,10 @@ impl Stream for BridgeStream {
             }
         }
 
-
         let res = gather_packets(interfaces, gather_to);
 
-        interfaces.retain(|iface| { //drop the complete interfaces
+        interfaces.retain(|iface| {
+            //drop the complete interfaces
             return !iface.complete;
         });
 
@@ -193,8 +200,8 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packet_provider =
-            BridgeStream::new(Config::default(), vec![Arc::clone(&handle)]).expect("Failed to build");
+        let packet_provider = BridgeStream::new(Config::default(), vec![Arc::clone(&handle)])
+            .expect("Failed to build");
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Vec<_> = fut_packets
             .await
@@ -242,8 +249,8 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packet_provider =
-            BridgeStream::new(Config::default(), vec![Arc::clone(&handle)]).expect("Failed to build");
+        let packet_provider = BridgeStream::new(Config::default(), vec![Arc::clone(&handle)])
+            .expect("Failed to build");
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
             let mut packets = vec![];

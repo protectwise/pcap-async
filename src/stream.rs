@@ -12,7 +12,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio_timer::Delay;
+use tokio::time::Delay;
 
 #[pin_project]
 pub struct PacketStream {
@@ -72,17 +72,16 @@ impl Stream for PacketStream {
             was_delayed = true;
         }
 
-        let mut existing_future = this.pending.take().unwrap_or_else(
-            || PacketFuture::new(this.config, &this.handle)
-        );
+        let mut existing_future = this
+            .pending
+            .take()
+            .unwrap_or_else(|| PacketFuture::new(this.config, &this.handle));
         match Pin::new(&mut existing_future).poll(cx) {
             Poll::Pending => {
                 *this.pending = Some(existing_future);
                 Poll::Pending
             }
-            Poll::Ready(Err(e)) => {
-                Poll::Ready(Some(Err(e)))
-            }
+            Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
             Poll::Ready(Ok(None)) => {
                 debug!("Stream was complete");
                 *this.complete = true;
@@ -91,7 +90,7 @@ impl Stream for PacketStream {
             Poll::Ready(Ok(Some(v))) => {
                 if v.is_empty() && !was_delayed {
                     trace!("No packets returned, and haven't delayed");
-                    *this.delaying = Some(tokio_timer::delay_for(*this.config.retry_after()));
+                    *this.delaying = Some(tokio::time::delay_for(*this.config.retry_after()));
                     Poll::Pending
                 } else {
                     trace!("Returning {} packets", v.len());

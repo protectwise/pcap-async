@@ -12,6 +12,8 @@ pub enum Error {
     Utf8(#[fail(cause)] std::str::Utf8Error),
     #[fail(display = "Time conversion error")]
     Time(#[fail(cause)] std::time::SystemTimeError),
+    #[fail(display = "Task error")]
+    Task(#[fail(cause)] tokio::task::JoinError),
     #[fail(display = "Null ptr returned")]
     NullPtr,
     #[fail(display = "Libpcap failed populate header")]

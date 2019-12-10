@@ -20,8 +20,8 @@
 //! }
 #![deny(unused_must_use, unused_imports, bare_trait_objects)]
 #![allow(dead_code, unused_imports)]
-mod bridge_stream;
 pub mod bpf;
+mod bridge_stream;
 mod config;
 mod errors;
 mod handle;
@@ -33,9 +33,8 @@ mod stats;
 mod stream;
 
 pub use crate::{
-    config::Config, errors::Error, handle::Handle, info::Info, packet::Packet, stats::Stats,
-    stream::PacketStream,
-    bridge_stream::BridgeStream
+    bridge_stream::BridgeStream, config::Config, errors::Error, handle::Handle, info::Info,
+    packet::Packet, stats::Stats, stream::PacketStream,
 };
 use failure::Fail;
 use log::*;

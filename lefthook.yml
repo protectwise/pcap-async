@@ -4,7 +4,7 @@ format:
     1_install:
       run: rustup component add rustfmt
     2_cargo_fmt:
-      run: cargo +nightly fmt --all
+      run: cargo +${RUST_VERSION:-stable} fmt --all
 
 pre-push:
   piped: true
@@ -12,4 +12,4 @@ pre-push:
     1_install:
       run: rustup component add rustfmt
     2_fmt:
-      run: cargo +nightly fmt --all -- --check
+      run: cargo +${RUST_VERSION:-stable} fmt --all -- --check
