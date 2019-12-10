@@ -5,8 +5,6 @@ pub struct Stats {
     pub dropped_by_interface: u32,
 }
 
-pub const EMPTY_STATS: Stats = Default::default();
-
 impl Stats {
     pub fn combine(&self, other: &Stats) -> Stats {
         Stats {
