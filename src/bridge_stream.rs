@@ -79,7 +79,7 @@ fn gather_packets(
         let v = std::mem::replace(&mut iface.existing, vec![]);
         to_sort.extend(v);
     }
-    debug!("Have {} existing packets", to_sort.len());
+    println!("Have {} existing packets", to_sort.len());
     if let Some(ts) = gather_to {
         for iface in interfaces.iter_mut() {
             let current = std::mem::replace(&mut iface.current, vec![]);
@@ -87,13 +87,13 @@ fn gather_packets(
                 *p.timestamp() < ts
             });
             let (before_ts, after_ts) = t;
-            debug!("Adding {} packets based on timestamp, {} packets adding to existing", before_ts.len(), after_ts.len());
+            println!("Adding {} packets based on timestamp, {} packets adding to existing", before_ts.len(), after_ts.len());
             to_sort.extend(before_ts);
             iface.existing = after_ts;
         }
     } else {
         for iface in interfaces.iter_mut() {
-            debug!("Moving {} packets into existing", iface.current.len());
+            println!("Moving {} packets into existing", iface.current.len());
             std::mem::swap(&mut iface.existing, &mut iface.current);
         }
     }
@@ -128,7 +128,7 @@ impl Stream for BridgeStream {
             let mut existing_future = iface.pending.take().unwrap_or_else(|| PacketFuture::new(config, &iface.handle));
             match Pin::new(&mut existing_future).poll(cx) {
                 Poll::Pending => {
-                    debug!("Pending");
+                    println!("Pending");
                     iface.pending = Some(existing_future);
                     continue;
                     //return Poll::Pending;
@@ -137,7 +137,7 @@ impl Stream for BridgeStream {
                     return Poll::Ready(Some(Err(e)));
                 }
                 Poll::Ready(Ok(None)) => {
-                    debug!("Interface has completed");
+                    println!("Interface has completed");
                     iface.complete = true;
                     continue;
                 }
@@ -151,11 +151,13 @@ impl Stream for BridgeStream {
                             std::cmp::min(ts, *p.timestamp())
                         }).or(Some(*p.timestamp()));
                     }
-                    trace!("Adding {} packets to current", v.len());
+                    println!("Adding {} packets to current", v.len());
                     iface.current.extend(v);
                 }
             }
         }
+
+        println!("EOL {:?}", interfaces.len());
 
         let res = gather_packets(interfaces, gather_to);
 
