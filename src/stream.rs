@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio_timer::Delay;
 
+pub type StreamItem = Result<Vec<Packet>, Error>;
+
 #[pin_project]
 pub struct PacketStream {
     config: Config,
@@ -53,7 +55,7 @@ impl PacketStream {
 }
 
 impl Stream for PacketStream {
-    type Item = Result<Vec<Packet>, Error>;
+    type Item = StreamItem;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();

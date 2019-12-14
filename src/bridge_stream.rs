@@ -15,6 +15,7 @@ use std::task::{Context, Poll};
 use std::collections::VecDeque;
 use std::time::SystemTime;
 use tokio_timer::Delay;
+use crate::stream::StreamItem;
 
 struct BridgedInterface {
     handle: Arc<Handle>,
@@ -25,76 +26,63 @@ struct BridgedInterface {
     complete: bool,
 }
 
+struct BridgeStreamState{
+    stream: Stream<Item = StreamItem>,
+    existing: Vec<Packet>,
+    current: Vec<Packet>,
+    delaying: Option<Delay>,
+
+}
+
 #[pin_project]
 pub struct BridgeStream {
     config: Config,
-    interfaces: VecDeque<BridgedInterface>
+    stream_states: VecDeque<BridgeStreamState>
 }
 
 impl BridgeStream {
-    pub fn new(config: Config, handles: Vec<Arc<Handle>>) -> Result<BridgeStream, Error> {
-        let mut interfaces = VecDeque::with_capacity(handles.len());
-        for handle in handles {
-            let live_capture = handle.is_live_capture();
-
-            if live_capture {
-                handle
-                    .set_snaplen(config.snaplen())?
-                    .set_non_block()?
-                    .set_promiscuous()?
-                    .set_timeout(config.timeout())?
-                    .set_buffer_size(config.buffer_size())?
-                    .activate()?;
-
-                if let Some(bpf) = config.bpf() {
-                    let bpf = handle.compile_bpf(bpf)?;
-                    handle.set_bpf(bpf)?;
-                }
-            }
-
-            let iface = BridgedInterface {
-                handle: handle,
-                delaying: None,
-                pending: None,
-                existing: vec![],
-                current: vec![],
-                complete: false,
+    pub fn new(config: Config, streams: Vec<Stream<Item = StreamItem>>) -> Result<BridgeStream, Error> {
+        let mut stream_states = VecDeque::with_capacity(streams.len());
+        for stream in streams {
+            let new_state = BridgeStreamState{
+                stream: stream,
+                existing: Vec::new()
             };
-            interfaces.push_back(iface)
+            stream_states.push_back(new_state);
         }
 
         Ok(BridgeStream {
             config: config,
-            interfaces: interfaces,
+            stream_states: stream_states,
         })
     }
 }
 
 fn gather_packets(
-    interfaces: &mut VecDeque<BridgedInterface>,
+    stream_states: &mut VecDeque<BridgeStreamState>,
     gather_to: Option<SystemTime>,
 ) -> Vec<Packet> {
     let mut to_sort = vec![];
-    for iface in interfaces.iter_mut() {
+    for iface in stream_states.iter_mut() {
         let v = std::mem::replace(&mut iface.existing, vec![]);
         to_sort.extend(v);
     }
     trace!("Have {} existing packets", to_sort.len());
     if let Some(ts) = gather_to {
-        for iface in interfaces.iter_mut() {
-            let current = std::mem::replace(&mut iface.current, vec![]);
+        for state in stream_states.iter_mut() {
+            let current = std::mem::replace(&mut state.current, vec![]);
             let t: (Vec<_>, Vec<_>) = current.into_iter().partition(|p| {
                 *p.timestamp() < ts
             });
             let (before_ts, after_ts) = t;
             trace!("Adding {} packets based on timestamp, {} packets adding to existing", before_ts.len(), after_ts.len());
             to_sort.extend(before_ts);
-            iface.existing = after_ts;
+            state.existing = after_ts;
         }
     } else {
-        for iface in interfaces.iter_mut() {
+        for iface in stream_states.iter_mut() {
             trace!("Moving {} packets into existing", iface.current.len());
-            std::mem::swap(&mut iface.existing, &mut iface.current);
+            std::mem::swap(&mut iface.existing, &mut iface.current); // are we dropping exisiting here?
         }
     }
     to_sort.sort_by_key(|p| *p.timestamp());
@@ -107,43 +95,37 @@ impl Stream for BridgeStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
         trace!("Interfaces: {:?}", this.interfaces.len());
-        let interfaces: &mut VecDeque<BridgedInterface> = this.interfaces;
+        let states: &mut VecDeque<BridgeStreamState> = this.stream_states;
         let config: &mut Config = this.config; //TODO use the Self {} extractor
 
         let mut gather_to: Option<SystemTime> = None;
-        for iface in interfaces.iter_mut() {
-            let mut was_delayed = false;
+        for state in states.iter_mut() {
 
-            if iface.complete {
-                return Poll::Ready(None);
-            }
-            if let Some(mut existing_delay) = iface.delaying.take() { //Check the interface for a delay..
+            if let Some(mut existing_delay) = state.delaying.take() { //Check the interface for a delay..
                 if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) { //still delayed?
                     trace!("Delaying");
-                    iface.delaying = Some(existing_delay);
+                    state.delaying = Some(existing_delay);
                     continue; // do another iteration on another iface
                 }
-                was_delayed = true;
             }
-            let mut existing_future = iface.pending.take().unwrap_or_else(|| PacketFuture::new(config, &iface.handle));
-            match Pin::new(&mut existing_future).poll(cx) {
+            let mut stream = state.stream;//.take().unwrap_or_else(|| PacketFuture::new(config, &state.handle));
+            match Pin::new(&mut stream).poll_next(cx) {
                 Poll::Pending => {
                     trace!("Pending");
-                    iface.pending = Some(existing_future);
+                    state.pending = Some(stream);
                     continue;
-                    //return Poll::Pending;
                 }
                 Poll::Ready(Err(e)) => {
                     return Poll::Ready(Some(Err(e)));
                 }
                 Poll::Ready(Ok(None)) => {
                     trace!("Interface has completed");
-                    iface.complete = true;
+                    state.complete = true;
                     continue;
                 }
                 Poll::Ready(Ok(Some(v))) => {
-                    if v.is_empty() && !was_delayed {
-                        iface.delaying = Some(tokio_timer::delay_for(*config.retry_after()));
+                    if v.is_empty() {
+                        state.delaying = Some(tokio_timer::delay_for(*config.retry_after()));
                         continue;
                     }
                     if let Some(p) = v.last() {
@@ -152,19 +134,18 @@ impl Stream for BridgeStream {
                         }).or(Some(*p.timestamp()));
                     }
                     trace!("Adding {} packets to current", v.len());
-                    iface.current.extend(v);
+                    state.current.extend(v);
                 }
             }
         }
 
+        let res = gather_packets(states, gather_to);
 
-        let res = gather_packets(interfaces, gather_to);
-
-        interfaces.retain(|iface| { //drop the complete interfaces
+        states.retain(|iface| { //drop the complete interfaces
             return !iface.complete;
         });
 
-        if res.is_empty() && interfaces.is_empty() {
+        if res.is_empty() && states.is_empty() {
             return Poll::Ready(None);
         } else {
             return Poll::Ready(Some(Ok(res)));
