@@ -5,55 +5,49 @@ use crate::packet::Packet;
 use crate::packet_future::PacketFuture;
 use crate::pcap_util;
 
+use crate::stream::StreamItem;
+use futures::future::Pending;
 use futures::stream::{Stream, StreamExt};
 use log::*;
 use pin_project::pin_project;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::collections::VecDeque;
 use std::time::SystemTime;
 use tokio_timer::Delay;
-use crate::stream::StreamItem;
-use futures::future::Pending;
 
-struct BridgedInterface {
-    handle: Arc<Handle>,
-    pending: Option<PacketFuture>,
-    delaying: Option<Delay>,
-    existing: Vec<Packet>,
-    current: Vec<Packet>,
-    complete: bool,
-}
-
-struct BridgeStreamState<T >
-where T: Stream<Item = StreamItem> + Sized + Unpin {
+struct BridgeStreamState<T>
+where
+    T: Stream<Item = StreamItem> + Sized + Unpin,
+{
     stream: T,
     existing: Vec<Packet>,
     current: Vec<Packet>,
     delaying: Option<Delay>,
     complete: bool,
-
 }
 
 #[pin_project]
 pub struct BridgeStream<T>
-    where T: Stream<Item = StreamItem> + Sized + Unpin {
+where
+    T: Stream<Item = StreamItem> + Sized + Unpin,
+{
     config: Config,
-    stream_states: VecDeque<BridgeStreamState<T>>
+    stream_states: VecDeque<BridgeStreamState<T>>,
 }
 
 impl<T: Stream<Item = StreamItem> + Sized + Unpin> BridgeStream<T> {
     pub fn new(config: Config, streams: Vec<T>) -> Result<BridgeStream<T>, Error> {
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for stream in streams {
-            let new_state = BridgeStreamState{
+            let new_state = BridgeStreamState {
                 stream: stream,
                 existing: Vec::new(),
                 current: Vec::new(),
                 delaying: None,
-                complete: false
+                complete: false,
             };
             stream_states.push_back(new_state);
         }
@@ -78,11 +72,13 @@ fn gather_packets<T: Stream<Item = StreamItem> + Sized + Unpin>(
     if let Some(ts) = gather_to {
         for state in stream_states.iter_mut() {
             let current = std::mem::replace(&mut state.current, vec![]);
-            let t: (Vec<_>, Vec<_>) = current.into_iter().partition(|p| {
-                *p.timestamp() < ts
-            });
+            let t: (Vec<_>, Vec<_>) = current.into_iter().partition(|p| *p.timestamp() < ts);
             let (before_ts, after_ts) = t;
-            trace!("Adding {} packets based on timestamp, {} packets adding to existing", before_ts.len(), after_ts.len());
+            trace!(
+                "Adding {} packets based on timestamp, {} packets adding to existing",
+                before_ts.len(),
+                after_ts.len()
+            );
             to_sort.extend(before_ts);
             state.existing = after_ts;
         }
@@ -108,9 +104,10 @@ impl<T: Stream<Item = StreamItem> + Sized + Unpin> Stream for BridgeStream<T> {
 
         let mut gather_to: Option<SystemTime> = None;
         for state in states.iter_mut() {
-
-            if let Some(mut existing_delay) = state.delaying.take() { //Check the interface for a delay..
-                if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) { //still delayed?
+            if let Some(mut existing_delay) = state.delaying.take() {
+                //Check the interface for a delay..
+                if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
+                    //still delayed?
                     trace!("Delaying");
                     state.delaying = Some(existing_delay);
                     continue; // do another iteration on another iface
@@ -135,9 +132,9 @@ impl<T: Stream<Item = StreamItem> + Sized + Unpin> Stream for BridgeStream<T> {
                         continue;
                     }
                     if let Some(p) = v.last() {
-                        gather_to = gather_to.map(|ts| {
-                            std::cmp::min(ts, *p.timestamp())
-                        }).or(Some(*p.timestamp()));
+                        gather_to = gather_to
+                            .map(|ts| std::cmp::min(ts, *p.timestamp()))
+                            .or(Some(*p.timestamp()));
                     }
                     trace!("Adding {} packets to current", v.len());
                     state.current.extend(v);
@@ -147,7 +144,8 @@ impl<T: Stream<Item = StreamItem> + Sized + Unpin> Stream for BridgeStream<T> {
 
         let res = gather_packets(states, gather_to);
 
-        states.retain(|iface| { //drop the complete interfaces
+        states.retain(|iface| {
+            //drop the complete interfaces
             return !iface.complete;
         });
 
@@ -180,8 +178,8 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packet_provider =
-            BridgeStream::new(Config::default(), vec![Arc::clone(&handle)]).expect("Failed to build");
+        let packet_provider = BridgeStream::new(Config::default(), vec![Arc::clone(&handle)])
+            .expect("Failed to build");
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Vec<_> = fut_packets
             .await
@@ -229,8 +227,8 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packet_provider =
-            BridgeStream::new(Config::default(), vec![Arc::clone(&handle)]).expect("Failed to build");
+        let packet_provider = BridgeStream::new(Config::default(), vec![Arc::clone(&handle)])
+            .expect("Failed to build");
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
             let mut packets = vec![];

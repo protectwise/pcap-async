@@ -74,17 +74,16 @@ impl Stream for PacketStream {
             was_delayed = true;
         }
 
-        let mut existing_future = this.pending.take().unwrap_or_else(
-            || PacketFuture::new(this.config, &this.handle)
-        );
+        let mut existing_future = this
+            .pending
+            .take()
+            .unwrap_or_else(|| PacketFuture::new(this.config, &this.handle));
         match Pin::new(&mut existing_future).poll(cx) {
             Poll::Pending => {
                 *this.pending = Some(existing_future);
                 Poll::Pending
             }
-            Poll::Ready(Err(e)) => {
-                Poll::Ready(Some(Err(e)))
-            }
+            Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
             Poll::Ready(Ok(None)) => {
                 debug!("Stream was complete");
                 *this.complete = true;

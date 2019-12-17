@@ -2,7 +2,7 @@
 use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 use futures::StreamExt;
 use log::*;
-use pcap_async::{Config, Handle, PacketStream, BridgeStream};
+use pcap_async::{BridgeStream, Config, Handle, PacketStream};
 use std::path::PathBuf;
 
 fn bench_stream_from_large_file(b: &mut Bencher) {
@@ -76,8 +76,9 @@ fn bench_stream_next_from_large_file_bridge(b: &mut Bencher) {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
-        let packet_provider = BridgeStream::new(Config::default(), vec![handle1.clone(), handle2.clone()])
-            .expect("Failed to build");
+        let packet_provider =
+            BridgeStream::new(Config::default(), vec![handle1.clone(), handle2.clone()])
+                .expect("Failed to build");
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
             let mut packets = vec![];
@@ -136,7 +137,8 @@ fn bench_stream_next_from_large_file(b: &mut Bencher) {
 }
 
 fn bench_stream_next_bridge(c: &mut Criterion) {
-    let benchmark = criterion::Benchmark::new("4sics-bridge", bench_stream_next_from_large_file_bridge);
+    let benchmark =
+        criterion::Benchmark::new("4sics-bridge", bench_stream_next_from_large_file_bridge);
 
     c.bench(
         "stream_next",
@@ -159,7 +161,12 @@ fn bench_stream_next(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, bench_stream, bench_stream_next, bench_stream_next_bridge);
+criterion_group!(
+    benches,
+    bench_stream,
+    bench_stream_next,
+    bench_stream_next_bridge
+);
 
 // Benchmark: cargo bench --verbose
 

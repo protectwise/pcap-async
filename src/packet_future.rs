@@ -51,7 +51,11 @@ impl PacketFuture {
     }
 }
 
-fn dispatch(pcap_handle: Arc<Handle>, live_capture: bool, max_packets_read: usize) -> Blocking<Result<Option<Vec<Packet>>, Error>> {
+fn dispatch(
+    pcap_handle: Arc<Handle>,
+    live_capture: bool,
+    max_packets_read: usize,
+) -> Blocking<Result<Option<Vec<Packet>>, Error>> {
     tokio_executor::blocking::run(move || {
         let mut packets = vec![];
 
@@ -73,22 +77,18 @@ fn dispatch(pcap_handle: Arc<Handle>, live_capture: bool, max_packets_read: usiz
                     return Ok(None);
                 }
                 -1 => {
-                    let err = crate::pcap_util::convert_libpcap_error(
-                        pcap_handle.as_mut_ptr(),
-                    );
+                    let err = crate::pcap_util::convert_libpcap_error(pcap_handle.as_mut_ptr());
                     error!("Error encountered when calling pcap_dispatch: {}", err);
                     return Err(err);
                 }
                 0 => {
                     if packets.is_empty() {
                         trace!("No packets in buffer");
-                        return Ok(Some(vec![]))
+                        return Ok(Some(vec![]));
                     } else {
                         if !live_capture {
                             debug!("Not live capture, calling breakloop");
-                            unsafe {
-                                pcap_sys::pcap_breakloop(pcap_handle.as_mut_ptr())
-                            }
+                            unsafe { pcap_sys::pcap_breakloop(pcap_handle.as_mut_ptr()) }
                         }
                         trace!("Capture loop captured {} available packets", packets.len());
                         return Ok(Some(packets));
@@ -105,9 +105,7 @@ fn dispatch(pcap_handle: Arc<Handle>, live_capture: bool, max_packets_read: usiz
                     }
                 }
                 _ => {
-                    let err = crate::pcap_util::convert_libpcap_error(
-                        pcap_handle.as_mut_ptr(),
-                    );
+                    let err = crate::pcap_util::convert_libpcap_error(pcap_handle.as_mut_ptr());
                     error!("Pcap dispatch returned {}: {:?}", ret_code, err);
                     return Err(err);
                 }
@@ -132,16 +130,20 @@ impl Future for PacketFuture {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
 
-        let mut f = this.outstanding.take().unwrap_or_else(|| dispatch(this.pcap_handle.clone(), *this.live_capture, *this.max_packets_read));
+        let mut f = this.outstanding.take().unwrap_or_else(|| {
+            dispatch(
+                this.pcap_handle.clone(),
+                *this.live_capture,
+                *this.max_packets_read,
+            )
+        });
 
         match Pin::new(&mut f).poll(cx) {
             Poll::Pending => {
                 *this.outstanding = Some(f);
                 Poll::Pending
             }
-            Poll::Ready(r) => {
-                Poll::Ready(r)
-            },
+            Poll::Ready(r) => Poll::Ready(r),
         }
     }
 }

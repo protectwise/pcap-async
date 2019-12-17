@@ -10,7 +10,7 @@ impl Stats {
         Stats {
             received: self.received + other.received,
             dropped_by_kernel: self.dropped_by_kernel + other.dropped_by_kernel,
-            dropped_by_interface: self.dropped_by_interface + other.dropped_by_interface
+            dropped_by_interface: self.dropped_by_interface + other.dropped_by_interface,
         }
     }
 }
