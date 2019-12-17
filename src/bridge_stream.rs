@@ -162,10 +162,10 @@ mod tests {
     use super::*;
     use crate::PacketStream;
     use byteorder::{ByteOrder, ReadBytesExt};
+    use futures::stream;
     use futures::{Future, Stream};
     use std::io::Cursor;
     use std::path::PathBuf;
-    use futures::stream;
 
     #[tokio::test]
     async fn packets_from_file() {
@@ -327,29 +327,58 @@ mod tests {
             .await;
 
         assert_eq!(result.len(), 2);
-        let batch1 = result.first()
+        let batch1 = result
+            .first()
             .expect("Expected value")
             .as_ref()
             .expect("Err not expected");
-        let batch2 = result.last()
+        let batch2 = result
+            .last()
             .expect("Expected value")
             .as_ref()
             .expect("Err not expected");
         let (batch1_min, batch1_max) = (batch1.first(), batch1.last());
         let (batch2_min, batch2_max) = (batch2.first(), batch2.last());
-        assert_eq!(batch1_min.unwrap().timestamp().duration_since(base_time).unwrap().as_secs(), 0);
-        assert_eq!(batch1_max.unwrap().timestamp().duration_since(base_time).unwrap().as_secs(), 13);
-        assert_eq!(batch2_min.unwrap().timestamp().duration_since(base_time).unwrap().as_secs(), 14);
-        assert_eq!(batch2_max.unwrap().timestamp().duration_since(base_time).unwrap().as_secs(), 19);
+        assert_eq!(
+            batch1_min
+                .unwrap()
+                .timestamp()
+                .duration_since(base_time)
+                .unwrap()
+                .as_secs(),
+            0
+        );
+        assert_eq!(
+            batch1_max
+                .unwrap()
+                .timestamp()
+                .duration_since(base_time)
+                .unwrap()
+                .as_secs(),
+            13
+        );
+        assert_eq!(
+            batch2_min
+                .unwrap()
+                .timestamp()
+                .duration_since(base_time)
+                .unwrap()
+                .as_secs(),
+            14
+        );
+        assert_eq!(
+            batch2_max
+                .unwrap()
+                .timestamp()
+                .duration_since(base_time)
+                .unwrap()
+                .as_secs(),
+            19
+        );
 
         let flat_result: Vec<Packet> = result.drain(..).flat_map(|r| r.unwrap()).collect();
         assert_eq!(flat_result.len(), 30); //30 because 20 + 10 from the time rangess specified above
 
         println!("Results: {:?}", result);
-
-        //assert_eq!(1, 2);
-
-
-
     }
 }
