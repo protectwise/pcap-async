@@ -160,11 +160,11 @@ impl<T: Stream<Item = StreamItem> + Sized + Unpin> Stream for BridgeStream<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PacketStream;
     use byteorder::{ByteOrder, ReadBytesExt};
     use futures::{Future, Stream};
     use std::io::Cursor;
     use std::path::PathBuf;
-    use crate::PacketStream;
 
     #[tokio::test]
     async fn packets_from_file() {
@@ -182,8 +182,8 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider = BridgeStream::new(Config::default(), vec![packet_stream])
-            .expect("Failed to build");
+        let packet_provider =
+            BridgeStream::new(Config::default(), vec![packet_stream]).expect("Failed to build");
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Vec<_> = fut_packets
             .await
@@ -233,8 +233,8 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider = BridgeStream::new(Config::default(), vec![packet_stream])
-            .expect("Failed to build");
+        let packet_provider =
+            BridgeStream::new(Config::default(), vec![packet_stream]).expect("Failed to build");
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
             let mut packets = vec![];
@@ -256,40 +256,40 @@ mod tests {
         assert_eq!(packets, 10);
     }
 
-        #[test]
-        fn packets_from_lookup_bridge() {
-            let _ = env_logger::try_init();
+    #[test]
+    fn packets_from_lookup_bridge() {
+        let _ = env_logger::try_init();
 
-            let handle = Handle::lookup().expect("No handle created");
-            let packet_stream =
-                PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+        let handle = Handle::lookup().expect("No handle created");
+        let packet_stream =
+            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-            let stream = BridgeStream::new(Config::default(), vec![packet_stream]);
+        let stream = BridgeStream::new(Config::default(), vec![packet_stream]);
 
-            assert!(
-                stream.is_ok(),
-                format!("Could not build stream {}", stream.err().unwrap())
-            );
-        }
+        assert!(
+            stream.is_ok(),
+            format!("Could not build stream {}", stream.err().unwrap())
+        );
+    }
 
-        #[test]
-        fn packets_from_lookup_with_bpf() {
-            let _ = env_logger::try_init();
+    #[test]
+    fn packets_from_lookup_with_bpf() {
+        let _ = env_logger::try_init();
 
-            let mut cfg = Config::default();
-            cfg.with_bpf(
-                "(not (net 172.16.0.0/16 and port 443)) and (not (host 172.17.76.33 and port 443))"
-                    .to_owned(),
-            );
-            let handle = Handle::lookup().expect("No handle created");
-            let packet_stream =
-                PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+        let mut cfg = Config::default();
+        cfg.with_bpf(
+            "(not (net 172.16.0.0/16 and port 443)) and (not (host 172.17.76.33 and port 443))"
+                .to_owned(),
+        );
+        let handle = Handle::lookup().expect("No handle created");
+        let packet_stream =
+            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-            let stream = BridgeStream::new(cfg, vec![packet_stream]);
+        let stream = BridgeStream::new(cfg, vec![packet_stream]);
 
-            assert!(
-                stream.is_ok(),
-                format!("Could not build stream {}", stream.err().unwrap())
-            );
-        }
+        assert!(
+            stream.is_ok(),
+            format!("Could not build stream {}", stream.err().unwrap())
+        );
+    }
 }
