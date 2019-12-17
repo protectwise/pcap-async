@@ -16,6 +16,7 @@ use std::collections::VecDeque;
 use std::time::SystemTime;
 use tokio_timer::Delay;
 use crate::stream::StreamItem;
+use futures::future::Pending;
 
 struct BridgedInterface {
     handle: Arc<Handle>,
@@ -26,27 +27,33 @@ struct BridgedInterface {
     complete: bool,
 }
 
-struct BridgeStreamState{
-    stream: Stream<Item = StreamItem>,
+struct BridgeStreamState<T >
+where T: Stream<Item = StreamItem> + Sized + Unpin {
+    stream: T,
     existing: Vec<Packet>,
     current: Vec<Packet>,
     delaying: Option<Delay>,
+    complete: bool,
 
 }
 
 #[pin_project]
-pub struct BridgeStream {
+pub struct BridgeStream<T>
+    where T: Stream<Item = StreamItem> + Sized + Unpin {
     config: Config,
-    stream_states: VecDeque<BridgeStreamState>
+    stream_states: VecDeque<BridgeStreamState<T>>
 }
 
-impl BridgeStream {
-    pub fn new(config: Config, streams: Vec<Stream<Item = StreamItem>>) -> Result<BridgeStream, Error> {
+impl<T: Stream<Item = StreamItem> + Sized + Unpin> BridgeStream<T> {
+    pub fn new(config: Config, streams: Vec<T>) -> Result<BridgeStream<T>, Error> {
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for stream in streams {
             let new_state = BridgeStreamState{
                 stream: stream,
-                existing: Vec::new()
+                existing: Vec::new(),
+                current: Vec::new(),
+                delaying: None,
+                complete: false
             };
             stream_states.push_back(new_state);
         }
@@ -58,8 +65,8 @@ impl BridgeStream {
     }
 }
 
-fn gather_packets(
-    stream_states: &mut VecDeque<BridgeStreamState>,
+fn gather_packets<T: Stream<Item = StreamItem> + Sized + Unpin>(
+    stream_states: &mut VecDeque<BridgeStreamState<T>>,
     gather_to: Option<SystemTime>,
 ) -> Vec<Packet> {
     let mut to_sort = vec![];
@@ -89,13 +96,14 @@ fn gather_packets(
     to_sort
 }
 
-impl Stream for BridgeStream {
-    type Item = Result<Vec<Packet>, Error>;
+impl<T: Stream<Item = StreamItem> + Sized + Unpin> Stream for BridgeStream<T> {
+    type Item = StreamItem;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        //return Poll::Pending;
         let this = self.project();
-        trace!("Interfaces: {:?}", this.interfaces.len());
-        let states: &mut VecDeque<BridgeStreamState> = this.stream_states;
+        trace!("Interfaces: {:?}", this.stream_states.len());
+        let states: &mut VecDeque<BridgeStreamState<T>> = this.stream_states;
         let config: &mut Config = this.config; //TODO use the Self {} extractor
 
         let mut gather_to: Option<SystemTime> = None;
@@ -108,22 +116,20 @@ impl Stream for BridgeStream {
                     continue; // do another iteration on another iface
                 }
             }
-            let mut stream = state.stream;//.take().unwrap_or_else(|| PacketFuture::new(config, &state.handle));
-            match Pin::new(&mut stream).poll_next(cx) {
+            match Pin::new(&mut state.stream).poll_next(cx) {
                 Poll::Pending => {
                     trace!("Pending");
-                    state.pending = Some(stream);
                     continue;
                 }
-                Poll::Ready(Err(e)) => {
+                Poll::Ready(Some(Err(e))) => {
                     return Poll::Ready(Some(Err(e)));
                 }
-                Poll::Ready(Ok(None)) => {
+                Poll::Ready(None) => {
                     trace!("Interface has completed");
                     state.complete = true;
                     continue;
                 }
-                Poll::Ready(Ok(Some(v))) => {
+                Poll::Ready(Some(Ok(v))) => {
                     if v.is_empty() {
                         state.delaying = Some(tokio_timer::delay_for(*config.retry_after()));
                         continue;
