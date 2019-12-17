@@ -164,6 +164,7 @@ mod tests {
     use futures::{Future, Stream};
     use std::io::Cursor;
     use std::path::PathBuf;
+    use crate::PacketStream;
 
     #[tokio::test]
     async fn packets_from_file() {
@@ -178,7 +179,10 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packet_provider = BridgeStream::new(Config::default(), vec![Arc::clone(&handle)])
+        let packet_stream =
+            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+
+        let packet_provider = BridgeStream::new(Config::default(), vec![packet_stream])
             .expect("Failed to build");
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Vec<_> = fut_packets
@@ -213,7 +217,6 @@ mod tests {
         );
         assert_eq!(actual_length, 54);
     }
-
     #[tokio::test]
     async fn packets_from_file_next_bridge() {
         let _ = env_logger::try_init();
@@ -227,7 +230,10 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packet_provider = BridgeStream::new(Config::default(), vec![Arc::clone(&handle)])
+        let packet_stream =
+            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+
+        let packet_provider = BridgeStream::new(Config::default(), vec![packet_stream])
             .expect("Failed to build");
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
@@ -250,36 +256,40 @@ mod tests {
         assert_eq!(packets, 10);
     }
 
-    #[test]
-    fn packets_from_lookup_bidge() {
-        let _ = env_logger::try_init();
+        #[test]
+        fn packets_from_lookup_bridge() {
+            let _ = env_logger::try_init();
 
-        let handle = Handle::lookup().expect("No handle created");
+            let handle = Handle::lookup().expect("No handle created");
+            let packet_stream =
+                PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(Config::default(), vec![handle]);
+            let stream = BridgeStream::new(Config::default(), vec![packet_stream]);
 
-        assert!(
-            stream.is_ok(),
-            format!("Could not build stream {}", stream.err().unwrap())
-        );
-    }
+            assert!(
+                stream.is_ok(),
+                format!("Could not build stream {}", stream.err().unwrap())
+            );
+        }
 
-    #[test]
-    fn packets_from_lookup_with_bpf() {
-        let _ = env_logger::try_init();
+        #[test]
+        fn packets_from_lookup_with_bpf() {
+            let _ = env_logger::try_init();
 
-        let mut cfg = Config::default();
-        cfg.with_bpf(
-            "(not (net 172.16.0.0/16 and port 443)) and (not (host 172.17.76.33 and port 443))"
-                .to_owned(),
-        );
-        let handle = Handle::lookup().expect("No handle created");
+            let mut cfg = Config::default();
+            cfg.with_bpf(
+                "(not (net 172.16.0.0/16 and port 443)) and (not (host 172.17.76.33 and port 443))"
+                    .to_owned(),
+            );
+            let handle = Handle::lookup().expect("No handle created");
+            let packet_stream =
+                PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(cfg, vec![handle]);
+            let stream = BridgeStream::new(cfg, vec![packet_stream]);
 
-        assert!(
-            stream.is_ok(),
-            format!("Could not build stream {}", stream.err().unwrap())
-        );
-    }
+            assert!(
+                stream.is_ok(),
+                format!("Could not build stream {}", stream.err().unwrap())
+            );
+        }
 }
