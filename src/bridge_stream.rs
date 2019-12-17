@@ -85,7 +85,7 @@ fn gather_packets<T: Stream<Item = StreamItem> + Sized + Unpin>(
     } else {
         for iface in stream_states.iter_mut() {
             trace!("Moving {} packets into existing", iface.current.len());
-            std::mem::swap(&mut iface.existing, &mut iface.current); // are we dropping exisiting here?
+            std::mem::swap(&mut iface.existing, &mut iface.current);
         }
     }
     to_sort.sort_by_key(|p| *p.timestamp());
@@ -165,6 +165,7 @@ mod tests {
     use futures::{Future, Stream};
     use std::io::Cursor;
     use std::path::PathBuf;
+    use futures::stream;
 
     #[tokio::test]
     async fn packets_from_file() {
@@ -291,5 +292,64 @@ mod tests {
             stream.is_ok(),
             format!("Could not build stream {}", stream.err().unwrap())
         );
+    }
+    #[tokio::test]
+    async fn packets_come_out_time_ordered() {
+        let mut packets1 = vec![];
+        let mut packets2 = vec![];
+
+        let base_time = std::time::SystemTime::UNIX_EPOCH;
+        let cfg = Config::default();
+
+        for s in 0..20 {
+            let d = base_time + std::time::Duration::from_secs(s);
+            let p = Packet::new(d, 0, 0, vec![]);
+            packets1.push(p)
+        }
+
+        for s in 5..15 {
+            let d = base_time + std::time::Duration::from_secs(s);
+            let p = Packet::new(d, 0, 0, vec![]);
+            packets2.push(p)
+        }
+
+        let item1: StreamItem = Ok(packets1);
+        let item2: StreamItem = Ok(packets2);
+
+        let stream1 = futures::stream::iter(vec![item1]);
+        let stream2 = futures::stream::iter(vec![item2]);
+
+        let bridge = BridgeStream::new(cfg, vec![stream1, stream2]);
+
+        let mut result = bridge
+            .expect("Unable to create BridgeStream")
+            .collect::<Vec<StreamItem>>()
+            .await;
+
+        assert_eq!(result.len(), 2);
+        let batch1 = result.first()
+            .expect("Expected value")
+            .as_ref()
+            .expect("Err not expected");
+        let batch2 = result.last()
+            .expect("Expected value")
+            .as_ref()
+            .expect("Err not expected");
+        let (batch1_min, batch1_max) = (batch1.first(), batch1.last());
+        let (batch2_min, batch2_max) = (batch2.first(), batch2.last());
+        assert_eq!(batch1_min.unwrap().timestamp().duration_since(base_time).unwrap().as_secs(), 0);
+        assert_eq!(batch1_max.unwrap().timestamp().duration_since(base_time).unwrap().as_secs(), 13);
+        assert_eq!(batch2_min.unwrap().timestamp().duration_since(base_time).unwrap().as_secs(), 14);
+        assert_eq!(batch2_max.unwrap().timestamp().duration_since(base_time).unwrap().as_secs(), 19);
+
+        let flat_result: Vec<Packet> = result.drain(..).flat_map(|r| r.unwrap()).collect();
+        assert_eq!(flat_result.len(), 30); //30 because 20 + 10 from the time rangess specified above
+
+        println!("Results: {:?}", result);
+
+        //assert_eq!(1, 2);
+
+
+
     }
 }
