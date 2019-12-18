@@ -23,7 +23,7 @@
 pub mod bpf;
 mod bridge_stream;
 mod config;
-mod errors;
+pub mod errors;
 mod handle;
 mod info;
 mod packet;
