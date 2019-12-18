@@ -34,12 +34,12 @@ pub struct BridgeStream<T>
 where
     T: Stream<Item = StreamItem> + Sized + Unpin,
 {
-    config: Config,
+    retry_after: std::time::Duration,
     stream_states: VecDeque<BridgeStreamState<T>>,
 }
 
 impl<T: Stream<Item = StreamItem> + Sized + Unpin> BridgeStream<T> {
-    pub fn new(config: Config, streams: Vec<T>) -> Result<BridgeStream<T>, Error> {
+    pub fn new(retry_after: std::time::Duration, streams: Vec<T>) -> Result<BridgeStream<T>, Error> {
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for stream in streams {
             let new_state = BridgeStreamState {
@@ -53,7 +53,7 @@ impl<T: Stream<Item = StreamItem> + Sized + Unpin> BridgeStream<T> {
         }
 
         Ok(BridgeStream {
-            config: config,
+            retry_after: retry_after,
             stream_states: stream_states,
         })
     }
@@ -100,7 +100,7 @@ impl<T: Stream<Item = StreamItem> + Sized + Unpin> Stream for BridgeStream<T> {
         let this = self.project();
         trace!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<T>> = this.stream_states;
-        let config: &mut Config = this.config; //TODO use the Self {} extractor
+        let retry_after: &mut std::time::Duration = this.retry_after;
 
         let mut gather_to: Option<SystemTime> = None;
         for state in states.iter_mut() {
@@ -128,7 +128,7 @@ impl<T: Stream<Item = StreamItem> + Sized + Unpin> Stream for BridgeStream<T> {
                 }
                 Poll::Ready(Some(Ok(v))) => {
                     if v.is_empty() {
-                        state.delaying = Some(tokio::time::delay_for(*config.retry_after()));
+                        state.delaying = Some(tokio::time::delay_for(*retry_after));
                         continue;
                     }
                     if let Some(p) = v.last() {
@@ -184,7 +184,7 @@ mod tests {
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
         let packet_provider =
-            BridgeStream::new(Config::default(), vec![packet_stream]).expect("Failed to build");
+            BridgeStream::new(Config::default().retry_after().clone(), vec![packet_stream]).expect("Failed to build");
 
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Vec<_> = fut_packets
@@ -236,7 +236,7 @@ mod tests {
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
         let packet_provider =
-            BridgeStream::new(Config::default(), vec![packet_stream]).expect("Failed to build");
+            BridgeStream::new(Config::default().retry_after().clone(), vec![packet_stream]).expect("Failed to build");
 
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
@@ -267,7 +267,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(Config::default(), vec![packet_stream]);
+        let stream = BridgeStream::new(Config::default().retry_after().clone(), vec![packet_stream]);
 
         assert!(
             stream.is_ok(),
@@ -288,7 +288,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(cfg, vec![packet_stream]);
+        let stream = BridgeStream::new(cfg.retry_after().clone(), vec![packet_stream]);
 
         assert!(
             stream.is_ok(),
@@ -321,7 +321,7 @@ mod tests {
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
 
-        let bridge = BridgeStream::new(cfg, vec![stream1, stream2]);
+        let bridge = BridgeStream::new(cfg.retry_after().clone(), vec![stream1, stream2]);
 
         let mut result = bridge
             .expect("Unable to create BridgeStream")
