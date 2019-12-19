@@ -13,8 +13,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::time::Delay;
+use failure::Fail;
+use std::marker::PhantomData;
 
-pub type StreamItem = Result<Vec<Packet>, Error>;
+pub type StreamItem<E> = Result<Vec<Packet>, E>;
 
 #[pin_project]
 pub struct PacketStream {
@@ -49,13 +51,13 @@ impl PacketStream {
             handle: handle,
             delaying: None,
             pending: None,
-            complete: false,
+            complete: false
         })
     }
 }
 
 impl Stream for PacketStream {
-    type Item = StreamItem;
+    type Item = StreamItem<Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
