@@ -13,20 +13,23 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::time::Delay;
+use failure::Fail;
+use std::marker::PhantomData;
 
-pub type StreamItem = Result<Vec<Packet>, Error>;
+pub type StreamItem<E: Fail + std::marker::Sync + std::marker::Send> = Result<Vec<Packet>, E>;
 
 #[pin_project]
-pub struct PacketStream {
+pub struct PacketStream<E: Fail + std::marker::Sync + std::marker::Send> {
     config: Config,
     handle: Arc<Handle>,
     delaying: Option<Delay>,
     pending: Option<PacketFuture>,
     complete: bool,
+    phantom: std::marker::PhantomData<E>
 }
 
-impl PacketStream {
-    pub fn new(config: Config, handle: Arc<Handle>) -> Result<PacketStream, Error> {
+impl<E: Fail + std::marker::Sync + std::marker::Send> PacketStream<E> {
+    pub fn new(config: Config, handle: Arc<Handle>) -> Result<PacketStream<E>, Error> {
         let live_capture = handle.is_live_capture();
 
         if live_capture {
@@ -50,12 +53,13 @@ impl PacketStream {
             delaying: None,
             pending: None,
             complete: false,
+            phantom: PhantomData
         })
     }
 }
 
-impl Stream for PacketStream {
-    type Item = StreamItem;
+impl<E: Fail + std::marker::Sync + std::marker::Send> Stream for PacketStream<E> {
+    type Item = StreamItem<E>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();

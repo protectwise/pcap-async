@@ -17,10 +17,12 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::time::Delay;
+use failure::Fail;
 
-struct BridgeStreamState<T>
+struct BridgeStreamState<E, T>
 where
-    T: Stream<Item = StreamItem> + Sized + Unpin,
+    E: Fail + std::marker::Sync + std::marker::Send,
+    T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     stream: T,
     existing: Vec<Packet>,
@@ -30,16 +32,16 @@ where
 }
 
 #[pin_project]
-pub struct BridgeStream<T>
+pub struct BridgeStream<E: Fail + std::marker::Sync + std::marker::Send, T>
 where
-    T: Stream<Item = StreamItem> + Sized + Unpin,
+    T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     retry_after: std::time::Duration,
-    stream_states: VecDeque<BridgeStreamState<T>>,
+    stream_states: VecDeque<BridgeStreamState<E, T>>,
 }
 
-impl<T: Stream<Item = StreamItem> + Sized + Unpin> BridgeStream<T> {
-    pub fn new(retry_after: std::time::Duration, streams: Vec<T>) -> Result<BridgeStream<T>, Error> {
+impl<E: Fail + std::marker::Sync + std::marker::Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
+    pub fn new(retry_after: std::time::Duration, streams: Vec<T>) -> Result<BridgeStream<E, T>, Error> {
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for stream in streams {
             let new_state = BridgeStreamState {
@@ -59,8 +61,8 @@ impl<T: Stream<Item = StreamItem> + Sized + Unpin> BridgeStream<T> {
     }
 }
 
-fn gather_packets<T: Stream<Item = StreamItem> + Sized + Unpin>(
-    stream_states: &mut VecDeque<BridgeStreamState<T>>,
+fn gather_packets<E: Fail + std::marker::Sync + std::marker::Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
+    stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
     gather_to: Option<SystemTime>,
 ) -> Vec<Packet> {
     let mut to_sort = vec![];
@@ -92,14 +94,14 @@ fn gather_packets<T: Stream<Item = StreamItem> + Sized + Unpin>(
     to_sort
 }
 
-impl<T: Stream<Item = StreamItem> + Sized + Unpin> Stream for BridgeStream<T> {
-    type Item = StreamItem;
+impl<E: Fail + std::marker::Sync + std::marker::Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream for BridgeStream<E, T> {
+    type Item = StreamItem<E>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         //return Poll::Pending;
         let this = self.project();
         trace!("Interfaces: {:?}", this.stream_states.len());
-        let states: &mut VecDeque<BridgeStreamState<T>> = this.stream_states;
+        let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
         let retry_after: &mut std::time::Duration = this.retry_after;
 
         let mut gather_to: Option<SystemTime> = None;
