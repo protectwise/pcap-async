@@ -40,7 +40,7 @@ use failure::Fail;
 use log::*;
 use std::sync::Arc;
 
-pub fn new_stream<E: Fail>(config: Config, handle: Arc<Handle>) -> Result<PacketStream<E>, Error> {
+pub fn new_stream(config: Config, handle: Arc<Handle>) -> Result<PacketStream, Error> {
     PacketStream::new(config, handle)
 }
 

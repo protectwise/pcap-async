@@ -19,17 +19,16 @@ use std::marker::PhantomData;
 pub type StreamItem<E: Fail + std::marker::Sync + std::marker::Send> = Result<Vec<Packet>, E>;
 
 #[pin_project]
-pub struct PacketStream<E: Fail + std::marker::Sync + std::marker::Send> {
+pub struct PacketStream {
     config: Config,
     handle: Arc<Handle>,
     delaying: Option<Delay>,
     pending: Option<PacketFuture>,
     complete: bool,
-    phantom: std::marker::PhantomData<E>
 }
 
-impl<E: Fail + std::marker::Sync + std::marker::Send> PacketStream<E> {
-    pub fn new(config: Config, handle: Arc<Handle>) -> Result<PacketStream<E>, Error> {
+impl PacketStream {
+    pub fn new(config: Config, handle: Arc<Handle>) -> Result<PacketStream, Error> {
         let live_capture = handle.is_live_capture();
 
         if live_capture {
@@ -52,14 +51,13 @@ impl<E: Fail + std::marker::Sync + std::marker::Send> PacketStream<E> {
             handle: handle,
             delaying: None,
             pending: None,
-            complete: false,
-            phantom: PhantomData
+            complete: false
         })
     }
 }
 
-impl<E: Fail + std::marker::Sync + std::marker::Send> Stream for PacketStream<E> {
-    type Item = StreamItem<E>;
+impl Stream for PacketStream {
+    type Item = StreamItem<Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
