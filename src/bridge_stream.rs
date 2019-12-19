@@ -317,8 +317,8 @@ mod tests {
             packets2.push(p)
         }
 
-        let item1: StreamItem = Ok(packets1);
-        let item2: StreamItem = Ok(packets2);
+        let item1: StreamItem<Error> = Ok(packets1);
+        let item2: StreamItem<Error> = Ok(packets2);
 
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
@@ -327,7 +327,7 @@ mod tests {
 
         let mut result = bridge
             .expect("Unable to create BridgeStream")
-            .collect::<Vec<StreamItem>>()
+            .collect::<Vec<StreamItem<Error>>>()
             .await;
 
         assert_eq!(result.len(), 2);

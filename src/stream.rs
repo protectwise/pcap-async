@@ -16,7 +16,7 @@ use tokio::time::Delay;
 use failure::Fail;
 use std::marker::PhantomData;
 
-pub type StreamItem<E: Fail + std::marker::Sync + std::marker::Send> = Result<Vec<Packet>, E>;
+pub type StreamItem<E: Fail> = Result<Vec<Packet>, E>;
 
 #[pin_project]
 pub struct PacketStream {
