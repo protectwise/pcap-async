@@ -1,0 +1,8 @@
+tag-name="{{crate_name}}-{{prev_version}}"
+no-dev-version=true
+pre-release-commit-message="(cargo-release) {{crate_name}} version {{prev_version}} [ci skip]"
+tag-message="(cargo-release) {{crate_name}} version {{prev_version}} [ci skip]"
+post-release-commit-message="(cargo-release) Released {{crate_name}}-{{prev_version}}, start next development iteration {{version}} [ci skip]"
+pre-release-replacements = [
+  {file="Cargo.toml", search="\\nversion\\s*=\\s*\"[a-z0-9\\.-]+\"", replace="\nversion = \"{{version}}\""},
+]
