@@ -21,7 +21,7 @@ use failure::Fail;
 
 struct BridgeStreamState<E, T>
 where
-    E: Fail + std::marker::Sync + std::marker::Send,
+    E: Fail + Sync + Send,
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     stream: T,
@@ -32,7 +32,7 @@ where
 }
 
 #[pin_project]
-pub struct BridgeStream<E: Fail + std::marker::Sync + std::marker::Send, T>
+pub struct BridgeStream<E: Fail + Sync + Send, T>
 where
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
@@ -40,7 +40,7 @@ where
     stream_states: VecDeque<BridgeStreamState<E, T>>,
 }
 
-impl<E: Fail + std::marker::Sync + std::marker::Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
+impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
     pub fn new(retry_after: std::time::Duration, streams: Vec<T>) -> Result<BridgeStream<E, T>, Error> {
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for stream in streams {
@@ -61,7 +61,7 @@ impl<E: Fail + std::marker::Sync + std::marker::Send, T: Stream<Item = StreamIte
     }
 }
 
-fn gather_packets<E: Fail + std::marker::Sync + std::marker::Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
+fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
     gather_to: Option<SystemTime>,
 ) -> Vec<Packet> {
@@ -94,7 +94,7 @@ fn gather_packets<E: Fail + std::marker::Sync + std::marker::Send, T: Stream<Ite
     to_sort
 }
 
-impl<E: Fail + std::marker::Sync + std::marker::Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream for BridgeStream<E, T> {
+impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream for BridgeStream<E, T> {
     type Item = StreamItem<E>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
