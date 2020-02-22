@@ -5,16 +5,16 @@ use crate::packet::Packet;
 use crate::packet_future::PacketFuture;
 use crate::pcap_util;
 
+use failure::Fail;
 use futures::stream::{Stream, StreamExt};
 use log::*;
 use pin_project::pin_project;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::time::Delay;
-use failure::Fail;
-use std::marker::PhantomData;
 
 pub type StreamItem<E> = Result<Vec<Packet>, E>;
 
@@ -51,7 +51,7 @@ impl PacketStream {
             handle: handle,
             delaying: None,
             pending: None,
-            complete: false
+            complete: false,
         })
     }
 }
