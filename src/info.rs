@@ -1,6 +1,5 @@
 use crate::{pcap_util, Error};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use byteorder::{BigEndian, WriteBytesExt};
 use std::mem;
 
 #[derive(Clone, Debug)]
@@ -56,7 +55,6 @@ impl Info {
                         }
                         libc::AF_INET6 => {
                             let ip_addr = unsafe {
-                                //*(sockaddr as *mut libc::sockaddr_in6 as *mut Ipv6Addr)
                                 let sock = sockaddr as *mut libc::sockaddr_in6;
                                 let sockaddr = (*sock).sin6_addr.s6_addr;
                                 let sockaddr = Ipv6Addr::from(sockaddr);
