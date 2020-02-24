@@ -1,4 +1,5 @@
 use crate::{pcap_util, Error};
+use std::mem;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 #[derive(Clone, Debug)]
@@ -41,13 +42,22 @@ impl Info {
                     let sockaddr = addr as *mut libc::sockaddr;
                     match unsafe { (*sockaddr).sa_family } as i32 {
                         libc::AF_INET => {
-                            let ip_addr =
-                                unsafe { *(sockaddr as *mut libc::sockaddr_in as *mut Ipv4Addr) };
+                            let ip_addr = unsafe {
+                                let sock = sockaddr as *mut libc::sockaddr_in;
+                                let sockaddr = (*sock).sin_addr.s_addr;
+                                let sockaddr = mem::transmute::<u32, [u8; 4]>(sockaddr);
+                                let sockaddr = Ipv4Addr::from(sockaddr);
+                                sockaddr
+                            };
                             addresses.push(IpAddr::V4(ip_addr));
                         }
                         libc::AF_INET6 => {
-                            let ip_addr =
-                                unsafe { *(sockaddr as *mut libc::sockaddr_in6 as *mut Ipv6Addr) };
+                            let ip_addr = unsafe {
+                                let sock = sockaddr as *mut libc::sockaddr_in6;
+                                let sockaddr = (*sock).sin6_addr.s6_addr;
+                                let sockaddr = Ipv6Addr::from(sockaddr);
+                                sockaddr
+                            };
                             addresses.push(IpAddr::V6(ip_addr));
                         }
                         _ => {
