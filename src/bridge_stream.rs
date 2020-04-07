@@ -115,7 +115,6 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             if let Some(mut existing_delay) = state.delaying.take() {
                 //Check the interface for a delay..
                 if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
-                    //still delayed?
                     delay_count = delay_count + 1;
                     trace!("Delaying");
                     state.delaying = Some(existing_delay);
@@ -159,12 +158,12 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             return !iface.complete;
         });
 
-        if delay_count >= states.len() {
-            debug!("All ifaces are delayed.");
-            return Poll::Pending;
-        } else if res.is_empty() && states.is_empty() {
+        if res.is_empty() && states.is_empty() {
             debug!("All ifaces are complete.");
             return Poll::Ready(None);
+        } else if delay_count >= states.len() {
+            debug!("All ifaces are delayed.");
+            return Poll::Pending;
         } else {
             return Poll::Ready(Some(Ok(res)));
         }
