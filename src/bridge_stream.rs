@@ -158,11 +158,12 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             return !iface.complete;
         });
 
+
         if res.is_empty() && states.is_empty() {
-            debug!("All ifaces are complete.");
+            trace!("All ifaces are complete.");
             return Poll::Ready(None);
-        } else if delay_count >= states.len() {
-            debug!("All ifaces are delayed.");
+        } else if delay_count >= states.len() && !states.is_empty() {
+            trace!("All ifaces are delayed.");
             return Poll::Pending;
         } else {
             return Poll::Ready(Some(Ok(res)));
@@ -336,13 +337,16 @@ mod tests {
 
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
+        println!("Made streams");
 
         let bridge = BridgeStream::new(cfg.retry_after().clone(), vec![stream1, stream2]);
+        println!("Made bridge");
 
         let mut result = bridge
             .expect("Unable to create BridgeStream")
             .collect::<Vec<StreamItem<Error>>>()
             .await;
+        println!("Made bridge result {:?}", result);
 
         assert_eq!(result.len(), 2);
         let batch1 = result
