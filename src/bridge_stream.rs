@@ -258,7 +258,7 @@ mod tests {
             let mut packet_provider = packet_provider.boxed();
             let mut packets = vec![];
             while let Some(p) = packet_provider.next().await {
-                println!("packets returned {:?}", p);
+                info!("packets returned {:?}", p);
                 packets.extend(p);
             }
             packets
@@ -337,16 +337,16 @@ mod tests {
 
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
-        println!("Made streams");
+        info!("Made streams");
 
         let bridge = BridgeStream::new(cfg.retry_after().clone(), vec![stream1, stream2]);
-        println!("Made bridge");
+        info!("Made bridge");
 
         let mut result = bridge
             .expect("Unable to create BridgeStream")
             .collect::<Vec<StreamItem<Error>>>()
             .await;
-        println!("Made bridge result {:?}", result);
+        info!("Made bridge result {:?}", result);
 
         assert_eq!(result.len(), 2);
         let batch1 = result
@@ -401,6 +401,6 @@ mod tests {
         let flat_result: Vec<Packet> = result.drain(..).flat_map(|r| r.unwrap()).collect();
         assert_eq!(flat_result.len(), 30); //30 because 20 + 10 from the time rangess specified above
 
-        println!("Results: {:?}", result);
+        info!("Results: {:?}", result);
     }
 }
