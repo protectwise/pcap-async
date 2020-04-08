@@ -16,6 +16,7 @@ authors = ["Danny Browning <bdbrowning2@gmail.com>"]
 categories = ["asynchronous", "network-programming"]
 documentation = "https://docs.rs/pcap-async/"
 repository = "https://github.com/dbcfd/pcap-async"
+exclude = ["resources/*.pcap"]
 
 [dependencies]
 byteorder = "1.3"
