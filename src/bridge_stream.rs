@@ -337,16 +337,14 @@ mod tests {
 
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
-        info!("Made streams");
 
         let bridge = BridgeStream::new(cfg.retry_after().clone(), vec![stream1, stream2]);
-        info!("Made bridge");
 
         let mut result = bridge
             .expect("Unable to create BridgeStream")
             .collect::<Vec<StreamItem<Error>>>()
             .await;
-        info!("Made bridge result {:?}", result);
+        info!("Result {:?}", result);
 
         assert_eq!(result.len(), 2);
         let batch1 = result
