@@ -158,7 +158,6 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             return !iface.complete;
         });
 
-
         if res.is_empty() && states.is_empty() {
             trace!("All ifaces are complete.");
             return Poll::Ready(None);
