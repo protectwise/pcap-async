@@ -110,11 +110,12 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
         let retry_after: &mut std::time::Duration = this.retry_after;
 
         let mut gather_to: Option<SystemTime> = None;
+        let mut delay_count = 0;
         for state in states.iter_mut() {
             if let Some(mut existing_delay) = state.delaying.take() {
                 //Check the interface for a delay..
                 if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
-                    //still delayed?
+                    delay_count = delay_count + 1;
                     trace!("Delaying");
                     state.delaying = Some(existing_delay);
                     continue; // do another iteration on another iface
@@ -123,6 +124,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             match Pin::new(&mut state.stream).poll_next(cx) {
                 Poll::Pending => {
                     trace!("Pending");
+                    state.delaying = Some(tokio::time::delay_for(*retry_after));
                     continue;
                 }
                 Poll::Ready(Some(Err(e))) => {
@@ -156,8 +158,13 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             return !iface.complete;
         });
 
+
         if res.is_empty() && states.is_empty() {
+            trace!("All ifaces are complete.");
             return Poll::Ready(None);
+        } else if delay_count >= states.len() && !states.is_empty() {
+            trace!("All ifaces are delayed.");
+            return Poll::Pending;
         } else {
             return Poll::Ready(Some(Ok(res)));
         }
@@ -251,7 +258,7 @@ mod tests {
             let mut packet_provider = packet_provider.boxed();
             let mut packets = vec![];
             while let Some(p) = packet_provider.next().await {
-                println!("packets returned {:?}", p);
+                info!("packets returned {:?}", p);
                 packets.extend(p);
             }
             packets
@@ -337,6 +344,7 @@ mod tests {
             .expect("Unable to create BridgeStream")
             .collect::<Vec<StreamItem<Error>>>()
             .await;
+        info!("Result {:?}", result);
 
         assert_eq!(result.len(), 2);
         let batch1 = result
@@ -391,6 +399,6 @@ mod tests {
         let flat_result: Vec<Packet> = result.drain(..).flat_map(|r| r.unwrap()).collect();
         assert_eq!(flat_result.len(), 30); //30 because 20 + 10 from the time rangess specified above
 
-        println!("Results: {:?}", result);
+        info!("Results: {:?}", result);
     }
 }
