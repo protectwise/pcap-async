@@ -12,7 +12,7 @@ readme = "README.md"
 description = """
 Async/Stream Extensions for libpcap
 """
-authors = ["Danny Browning <bdbrowning2@gmail.com>"]
+authors = ["Danny Browning <bdbrowning2@gmail.com>", "Ben Kornmeier <ben@kornstar.net>"]
 categories = ["asynchronous", "network-programming"]
 documentation = "https://docs.rs/pcap-async/"
 repository = "https://github.com/dbcfd/pcap-async"
