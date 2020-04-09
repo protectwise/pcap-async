@@ -27,7 +27,7 @@ where
     stream: T,
     existing: Vec<Packet>,
     current: Vec<Packet>,
-    delaying: Option<Delay>,
+    delaying: bool,//Option<Delay>,
     complete: bool,
 }
 
@@ -51,7 +51,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
                 stream: stream,
                 existing: Vec::new(),
                 current: Vec::new(),
-                delaying: None,
+                delaying: false,
                 complete: false,
             };
             stream_states.push_back(new_state);
@@ -69,8 +69,8 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
     gather_to: Option<SystemTime>,
 ) -> Vec<Packet> {
     let mut to_sort = vec![];
-    for iface in stream_states.iter_mut() {
-        let v = std::mem::replace(&mut iface.existing, vec![]);
+    for state in stream_states.iter_mut() {
+        let v = std::mem::replace(&mut state.existing, vec![]);
         to_sort.extend(v);
     }
     trace!("Have {} existing packets", to_sort.len());
@@ -112,19 +112,24 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
         let mut gather_to: Option<SystemTime> = None;
         let mut delay_count = 0;
         for state in states.iter_mut() {
-            if let Some(mut existing_delay) = state.delaying.take() {
-                //Check the interface for a delay..
-                if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
-                    delay_count = delay_count + 1;
-                    trace!("Delaying");
-                    state.delaying = Some(existing_delay);
-                    continue; // do another iteration on another iface
-                }
+            if state.delaying {
+                delay_count = delay_count + 1;
+                state.delaying = false;
+                continue;
             }
+            // if let Some(mut existing_delay) = state.delaying.take() {
+            //     //Check the interface for a delay..
+            //     if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
+            //         delay_count = delay_count + 1;
+            //         trace!("Delaying");
+            //         state.delaying = Some(existing_delay);
+            //         continue; // do another iteration on another iface
+            //     }
+            // }
             match Pin::new(&mut state.stream).poll_next(cx) {
                 Poll::Pending => {
                     trace!("Pending");
-                    state.delaying = Some(tokio::time::delay_for(*retry_after));
+                    state.delaying = true;//Some(tokio::time::delay_for(*retry_after));
                     continue;
                 }
                 Poll::Ready(Some(Err(e))) => {
@@ -137,7 +142,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                 }
                 Poll::Ready(Some(Ok(v))) => {
                     if v.is_empty() {
-                        state.delaying = Some(tokio::time::delay_for(*retry_after));
+                        state.delaying = true;//Some(tokio::time::delay_for(*retry_after));
                         continue;
                     }
                     if let Some(p) = v.last() {
