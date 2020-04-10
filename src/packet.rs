@@ -16,33 +16,41 @@ impl Packet {
     pub fn into_data(self) -> Vec<u8> {
         self.data
     }
-    
+
     pub fn into_pcap_record<T: ByteOrder>(self) -> Result<Vec<u8>, Error> {
         self.as_pcap_record::<T>()
     }
 
     pub fn as_pcap_record<T: ByteOrder>(&self) -> Result<Vec<u8>, Error> {
+        let data = Vec::with_capacity(self.data.len() + 4 * std::mem::size_of::<u32>());
+        let mut cursor = Cursor::new(data);
+        self.write_pcap_record::<T, Cursor<Vec<u8>>>(&mut cursor)?;
+        Ok(cursor.into_inner())
+    }
+
+    pub fn write_pcap_record<B: ByteOrder, C: WriteBytesExt>(
+        &self,
+        cursor: &mut C,
+    ) -> Result<(), Error> {
         let dur = self
             .timestamp
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(Error::Time)?;
-        let data = Vec::with_capacity(self.data.len() + 4 * std::mem::size_of::<u32>());
-        let mut cursor = Cursor::new(data);
+
         cursor
-            .write_u32::<T>(dur.as_secs() as _)
+            .write_u32::<B>(dur.as_secs() as _)
             .map_err(Error::Io)?;
         cursor
-            .write_u32::<T>(dur.subsec_micros())
+            .write_u32::<B>(dur.subsec_micros())
             .map_err(Error::Io)?;
         cursor
-            .write_u32::<T>(self.actual_length)
+            .write_u32::<B>(self.actual_length)
             .map_err(Error::Io)?;
         cursor
-            .write_u32::<T>(self.original_length)
+            .write_u32::<B>(self.original_length)
             .map_err(Error::Io)?;
-        let mut res = cursor.into_inner();
-        res.extend(self.data.as_slice());
-        Ok(res)
+        cursor.write(self.data.as_slice()).map_err(Error::Io)?;
+        Ok(())
     }
 
     pub fn timestamp(&self) -> &std::time::SystemTime {

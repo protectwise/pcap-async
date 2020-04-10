@@ -32,11 +32,11 @@ pub mod pcap_util;
 mod stats;
 mod stream;
 
-pub use byteorder::{BigEndian, LittleEndian, NativeEndian};
 pub use crate::{
     bridge_stream::BridgeStream, config::Config, errors::Error, handle::Handle, info::Info,
     packet::Packet, stats::Stats, stream::PacketStream, stream::StreamItem,
 };
+pub use byteorder::{BigEndian, LittleEndian, NativeEndian};
 use failure::Fail;
 use log::*;
 use std::sync::Arc;
