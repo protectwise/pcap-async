@@ -16,7 +16,12 @@ impl Packet {
     pub fn into_data(self) -> Vec<u8> {
         self.data
     }
+    
     pub fn into_pcap_record<T: ByteOrder>(self) -> Result<Vec<u8>, Error> {
+        self.as_pcap_record()
+    }
+
+    pub fn as_pcap_record<T: ByteOrder>(&self) -> Result<Vec<u8>, Error> {
         let dur = self
             .timestamp
             .duration_since(std::time::UNIX_EPOCH)
@@ -36,9 +41,10 @@ impl Packet {
             .write_u32::<T>(self.original_length)
             .map_err(Error::Io)?;
         let mut res = cursor.into_inner();
-        res.extend(self.data);
+        res.extend(self.data.as_slice());
         Ok(res)
     }
+
     pub fn timestamp(&self) -> &std::time::SystemTime {
         &self.timestamp
     }
