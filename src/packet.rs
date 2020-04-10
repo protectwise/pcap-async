@@ -18,7 +18,7 @@ impl Packet {
     }
     
     pub fn into_pcap_record<T: ByteOrder>(self) -> Result<Vec<u8>, Error> {
-        self.as_pcap_record()
+        self.as_pcap_record::<T>()
     }
 
     pub fn as_pcap_record<T: ByteOrder>(&self) -> Result<Vec<u8>, Error> {

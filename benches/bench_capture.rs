@@ -76,8 +76,12 @@ fn bench_stream_next_from_large_file_bridge(b: &mut Bencher) {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
+        let streams = vec![handle1.clone(), handle2.clone()].into_iter().map(|h| {
+            PacketStream::new(Config::default(), h).unwrap()
+        }).collect();
+
         let packet_provider =
-            BridgeStream::new(Config::default(), vec![handle1.clone(), handle2.clone()])
+            BridgeStream::new(Config::default().retry_after().clone(), streams)
                 .expect("Failed to build");
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
