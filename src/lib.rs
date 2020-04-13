@@ -27,7 +27,7 @@ pub mod errors;
 mod handle;
 mod info;
 mod packet;
-mod packet_future;
+mod packet_iterator;
 pub mod pcap_util;
 mod stats;
 mod stream;
