@@ -124,6 +124,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             match Pin::new(&mut state.stream).poll_next(cx) {
                 Poll::Pending => {
                     trace!("Pending");
+                    delay_count = delay_count + 1;
                     state.delaying = Some(tokio::time::delay_for(*retry_after));
                     continue;
                 }
@@ -151,7 +152,11 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             }
         }
 
-        let res = gather_packets(states, gather_to);
+        let res = if delay_count == 0 {
+            gather_packets(states, gather_to)
+        } else {
+            vec![]
+        };
 
         states.retain(|iface| {
             //drop the complete interfaces
