@@ -68,10 +68,16 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
 
 fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
-    gather_to: Option<SystemTime>,
+    //gather_to: Option<SystemTime>,
 ) -> Vec<Packet> {
     let mut to_sort = vec![];
+    let mut gather_to: Option<SystemTime> = None;
     for iface in stream_states.iter_mut() {
+        if let Some(p) = iface.current.last() {
+            gather_to = gather_to
+                .map(|ts| std::cmp::min(ts, *p.timestamp()))
+                .or(Some(*p.timestamp()));
+        }
         let v = std::mem::replace(&mut iface.existing, vec![]);
         to_sort.extend(v);
     }
@@ -111,7 +117,6 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
         let retry_after: &mut std::time::Duration = this.retry_after;
 
-        let mut gather_to: Option<SystemTime> = None;
         let mut delay_count = 0;
         for state in states.iter_mut() {
             if let Some(mut existing_delay) = state.delaying.take() {
@@ -139,18 +144,14 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     continue;
                 }
                 Poll::Ready(Some(Ok(v))) => {
-                    state.reported = true;
+                    state.reported = true; //a iface can report no packets, and for that reason we can not use `!state.current.is_empty()`
                     if v.is_empty() {
                         state.delaying = Some(tokio::time::delay_for(*retry_after));
                         continue;
                     }
-                    if let Some(p) = v.last() {
-                        gather_to = gather_to
-                            .map(|ts| std::cmp::min(ts, *p.timestamp()))
-                            .or(Some(*p.timestamp()));
-                    }
                     trace!("Adding {} packets to current", v.len());
                     state.current.extend(v);
+
                 }
             }
         }
@@ -167,7 +168,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             for state in states.iter_mut() {
                 state.reported = false;
             }
-            gather_packets(states, gather_to)
+            gather_packets(states)
         } else {
             trace!("{} / {} iface reported.", report_count, states.len());
             vec![]
