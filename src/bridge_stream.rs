@@ -113,11 +113,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
         let mut gather_to: Option<SystemTime> = None;
         let mut delay_count = 0;
-        let mut report_count = 0;
         for state in states.iter_mut() {
-            if state.reported {
-                report_count = report_count + 1;
-            }
             if let Some(mut existing_delay) = state.delaying.take() {
                 //Check the interface for a delay..
                 if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
@@ -156,6 +152,12 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     trace!("Adding {} packets to current", v.len());
                     state.current.extend(v);
                 }
+            }
+        }
+        let mut report_count = 0;
+        for state in states.iter() {
+            if state.reported || state.complete {
+                report_count = report_count + 1;
             }
         }
 
