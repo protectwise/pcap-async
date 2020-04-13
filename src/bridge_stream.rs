@@ -150,7 +150,6 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     }
                     trace!("Adding {} packets to current", v.len());
                     state.current.extend(v);
-
                 }
             }
         }
@@ -161,7 +160,8 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             }
         }
 
-        let res = if report_count == states.len() { // We much ensure that all interfaces have reported.
+        let res = if report_count == states.len() {
+            // We much ensure that all interfaces have reported.
             trace!("All ifaces have reported.");
 
             for state in states.iter_mut() {
