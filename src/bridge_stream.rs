@@ -29,6 +29,7 @@ where
     current: Vec<Packet>,
     delaying: Option<Delay>,
     complete: bool,
+    reported: bool,
 }
 
 #[pin_project]
@@ -53,6 +54,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
                 current: Vec::new(),
                 delaying: None,
                 complete: false,
+                reported: false,
             };
             stream_states.push_back(new_state);
         }
@@ -111,7 +113,11 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
         let mut gather_to: Option<SystemTime> = None;
         let mut delay_count = 0;
+        let mut report_count = 0;
         for state in states.iter_mut() {
+            if state.reported {
+                report_count = report_count + 1;
+            }
             if let Some(mut existing_delay) = state.delaying.take() {
                 //Check the interface for a delay..
                 if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
@@ -137,6 +143,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     continue;
                 }
                 Poll::Ready(Some(Ok(v))) => {
+                    state.reported = true;
                     if v.is_empty() {
                         state.delaying = Some(tokio::time::delay_for(*retry_after));
                         continue;
@@ -152,9 +159,15 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             }
         }
 
-        let res = if delay_count == 0 {
+        let res = if report_count == states.len() { // We much ensure that all interfaces have reported.
+            trace!("All ifaces have reported.");
+
+            for state in states.iter_mut() {
+                state.reported = false;
+            }
             gather_packets(states, gather_to)
         } else {
+            trace!("{} / {} iface reported.", report_count, states.len());
             vec![]
         };
 
