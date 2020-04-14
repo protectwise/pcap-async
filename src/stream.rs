@@ -1,8 +1,7 @@
 use crate::config::Config;
 use crate::errors::Error;
 use crate::handle::Handle;
-use crate::packet::Packet;
-use crate::packet_iterator::{PacketIterator, PacketIteratorItem};
+use crate::packet::{Packet, PacketIterator, PacketIteratorItem};
 use crate::pcap_util;
 
 use failure::Fail;
@@ -35,7 +34,7 @@ impl PacketStream {
                 .set_snaplen(config.snaplen())?
                 .set_non_block()?
                 .set_promiscuous()?
-                .set_timeout(config.timeout())?
+                .set_timeout(&std::time::Duration::from_secs(0))?
                 .set_buffer_size(config.buffer_size())?
                 .activate()?;
 
@@ -126,7 +125,9 @@ mod tests {
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|p| p.data().len() == p.actual_length() as _)
+            .filter(|p| {
+                p.data().len() == p.actual_length() as _
+            })
             .collect();
 
         handle.interrupt();
