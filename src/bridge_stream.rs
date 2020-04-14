@@ -27,9 +27,7 @@ where
     stream: T,
     existing: Vec<Packet>,
     current: Vec<Packet>,
-    delaying: Option<Delay>,
     complete: bool,
-    reported: bool,
 }
 
 #[pin_project]
@@ -39,6 +37,7 @@ where
 {
     retry_after: std::time::Duration,
     stream_states: VecDeque<BridgeStreamState<E, T>>,
+    tick: Option<Delay>,
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
@@ -52,9 +51,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
                 stream: stream,
                 existing: Vec::new(),
                 current: Vec::new(),
-                delaying: None,
                 complete: false,
-                reported: false,
             };
             stream_states.push_back(new_state);
         }
@@ -62,6 +59,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
         Ok(BridgeStream {
             retry_after: retry_after,
             stream_states: stream_states,
+            tick: Some(tokio::time::delay_for(retry_after)),
         })
     }
 }
@@ -111,27 +109,19 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         //return Poll::Pending;
-        let this = self.project();
+        let mut this = self.project();
         trace!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
         let retry_after: &mut std::time::Duration = this.retry_after;
 
         let mut delay_count = 0;
         for state in states.iter_mut() {
-            if let Some(mut existing_delay) = state.delaying.take() {
-                //Check the interface for a delay..
-                if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
-                    delay_count = delay_count + 1;
-                    trace!("Delaying");
-                    state.delaying = Some(existing_delay);
-                    continue; // do another iteration on another iface
-                }
-            }
+
             match Pin::new(&mut state.stream).poll_next(cx) {
                 Poll::Pending => {
                     trace!("Pending");
                     delay_count = delay_count + 1;
-                    state.delaying = Some(tokio::time::delay_for(*retry_after));
+                    //state.delaying = Some(tokio::time::delay_for(*retry_after));
                     continue;
                 }
                 Poll::Ready(Some(Err(e))) => {
@@ -143,9 +133,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     continue;
                 }
                 Poll::Ready(Some(Ok(v))) => {
-                    state.reported = true; //a iface can report no packets, and for that reason we can not use `!state.current.is_empty()`
                     if v.is_empty() {
-                        state.delaying = Some(tokio::time::delay_for(*retry_after));
                         continue;
                     }
                     trace!("Adding {} packets to current", v.len());
@@ -153,23 +141,17 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                 }
             }
         }
-        let mut report_count = 0;
-        for state in states.iter() {
-            if state.reported || state.complete {
-                report_count = report_count + 1;
-            }
-        }
 
-        let res = if report_count == states.len() {
-            // We much ensure that all interfaces have reported.
-            trace!("All ifaces have reported.");
-
-            for state in states.iter_mut() {
-                state.reported = false;
+        let res = if let Some(mut tick) = this.tick.take() {
+            if let Poll::Ready(_) = Pin::new(&mut tick).poll(cx) {
+                *this.tick =  Some(tokio::time::delay_for(*retry_after));
+                gather_packets(states)
+            } else {
+                *this.tick = Some(tick);
+                vec![]
             }
-            gather_packets(states)
-        } else {
-            trace!("{} / {} iface reported.", report_count, states.len());
+        } else {//For some reason we got none, set a time out.
+            *this.tick = Some(tokio::time::delay_for(*retry_after));
             vec![]
         };
 
