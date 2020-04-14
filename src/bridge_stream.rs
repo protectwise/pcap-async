@@ -24,6 +24,8 @@ struct BridgeStreamState<I: Iterator<Item = PacketIteratorItem>>
     existing: Vec<Packet>,
     current: Vec<Packet>,
     complete: bool,
+    reported: bool,
+    delaying: Option<Delay>,
 }
 
 #[pin_project]
@@ -31,12 +33,11 @@ pub struct BridgeStream<I: Iterator<Item = PacketIteratorItem>>
 {
     retry_after: std::time::Duration,
     stream_states: VecDeque<BridgeStreamState<I>>,
-    tick: Option<Delay>,
 }
 
 impl<I: Iterator<Item = PacketIteratorItem>> BridgeStream<I> {
     pub fn new(config: Config, handles: Vec<Arc<Handle>>) -> Result<BridgeStream<PacketIterator>, Error> {
-        let its = handles.into_iter().map(|h| {
+        let states = handles.into_iter().map(|h| {
             config.activate_handle(Arc::clone(&h)).unwrap(); //TODO use the Try fror iterops
             let it = PacketIterator::new(&config, &h);
             let new_state = BridgeStreamState {
@@ -44,6 +45,8 @@ impl<I: Iterator<Item = PacketIteratorItem>> BridgeStream<I> {
                 existing: Vec::new(),
                 current: Vec::new(),
                 complete: false,
+                reported: false,
+                delaying: None,
             };
             new_state
 
@@ -51,8 +54,25 @@ impl<I: Iterator<Item = PacketIteratorItem>> BridgeStream<I> {
 
         Ok(BridgeStream {
             retry_after: config.retry_after().to_owned(),
-            stream_states: its,
-            tick: Some(tokio::time::delay_for(config.retry_after().to_owned())),
+            stream_states: states,
+        })
+    }
+
+    fn from_iterators(config: &Config, its: Vec<I>) -> Result<BridgeStream<I>, Error> {
+        let states = its.into_iter().map(|it| {
+            BridgeStreamState {
+                it: it,
+                existing: Vec::new(),
+                current: Vec::new(),
+                complete: false,
+                reported: false,
+                delaying: None,
+            }
+        }).collect::<VecDeque<_>>();
+
+        Ok(BridgeStream {
+            retry_after: config.retry_after().to_owned(),
+            stream_states: states,
         })
 
     }
@@ -106,14 +126,23 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream
         let mut this = self.project();
         trace!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<I>> = this.stream_states;
-        let retry_after: &mut std::time::Duration = this.retry_after;
 
         let mut delay_count = 0;
         for state in states.iter_mut() {
+            if let Some(mut existing_delay) = state.delaying.take() {
+                //Check the interface for a delay..
+                if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
+                    delay_count = delay_count + 1;
+                    trace!("Delaying");
+                    state.delaying = Some(existing_delay);
+                    continue; // do another iteration on another iface
+                }
+            }
 
             match state.it.next() {
                 Some(PacketIteratorItem::NoPackets) => {
                     trace!("Pending");
+                    state.reported = true;
                     delay_count = delay_count + 1;
                     continue;
                 }
@@ -126,22 +155,30 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream
                     continue;
                 }
                Some(PacketIteratorItem::Packets(v)) => {
-                    trace!("Adding {} packets to current", v.len());
-                    state.current.extend(v);
+                   trace!("Adding {} packets to current", v.len());
+                   state.reported = true;
+                   state.current.extend(v);
                 }
             }
         }
 
-        let res = if let Some(mut tick) = this.tick.take() {
-            if let Poll::Ready(_) = Pin::new(&mut tick).poll(cx) {
-                *this.tick =  Some(tokio::time::delay_for(*retry_after));
-                gather_packets(states)
-            } else {
-                *this.tick = Some(tick);
-                vec![]
+        let mut report_count = 0;
+        for state in states.iter() {
+            if state.reported || state.complete {
+                report_count = report_count + 1;
             }
-        } else {//For some reason we got none, set a time out.
-            *this.tick = Some(tokio::time::delay_for(*retry_after));
+        }
+
+        let res = if report_count == states.len() {
+            // We much ensure that all interfaces have reported.
+            trace!("All ifaces have reported.");
+
+            for state in states.iter_mut() {
+                state.reported = false;
+            }
+            gather_packets(states)
+        } else {
+            trace!("{} / {} iface reported.", report_count, states.len());
             vec![]
         };
 
@@ -186,10 +223,10 @@ mod tests {
             .expect("No handle created");
 
         let packet_stream =
-            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+            PacketIterator::new(&Config::default(), &Arc::clone(&handle));
 
         let packet_provider =
-            BridgeStream::new(Config::default().retry_after().clone(), vec![packet_stream])
+            BridgeStream::from_iterators(&Config::default(), vec![packet_stream])
                 .expect("Failed to build");
 
         let fut_packets = packet_provider.collect::<Vec<_>>();
@@ -239,10 +276,10 @@ mod tests {
             .expect("No handle created");
 
         let packet_stream =
-            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+            PacketIterator::new(&Config::default(), &Arc::clone(&handle));
 
         let packet_provider =
-            BridgeStream::new(Config::default().retry_after().clone(), vec![packet_stream])
+            BridgeStream::from_iterators(&Config::default(), vec![packet_stream])
                 .expect("Failed to build");
 
         let fut_packets = async move {
@@ -272,10 +309,10 @@ mod tests {
 
         let handle = Handle::lookup().expect("No handle created");
         let packet_stream =
-            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+            PacketIterator::new(&Config::default(), &Arc::clone(&handle));
 
         let stream =
-            BridgeStream::new(Config::default().retry_after().clone(), vec![packet_stream]);
+            BridgeStream::from_iterators(&Config::default(), vec![packet_stream]);
 
         assert!(
             stream.is_ok(),
@@ -294,9 +331,9 @@ mod tests {
         );
         let handle = Handle::lookup().expect("No handle created");
         let packet_stream =
-            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+            PacketIterator::new(&Config::default(), &Arc::clone(&handle));
 
-        let stream = BridgeStream::new(cfg.retry_after().clone(), vec![packet_stream]);
+        let stream = BridgeStream::from_iterators(&cfg, vec![packet_stream]);
 
         assert!(
             stream.is_ok(),
@@ -323,13 +360,13 @@ mod tests {
             packets2.push(p)
         }
 
-        let item1: StreamItem<Error> = Ok(packets1);
-        let item2: StreamItem<Error> = Ok(packets2);
+        let item1: PacketIteratorItem= PacketIteratorItem::Packets(packets1);
+        let item2: PacketIteratorItem = PacketIteratorItem::Packets(packets2);
 
-        let stream1 = futures::stream::iter(vec![item1]);
-        let stream2 = futures::stream::iter(vec![item2]);
+        let stream1 = vec![item1].into_iter();
+        let stream2 = vec![item2].into_iter();
 
-        let bridge = BridgeStream::new(cfg.retry_after().clone(), vec![stream1, stream2]);
+        let bridge = BridgeStream::from_iterators(&cfg, vec![stream1, stream2]);
 
         let mut result = bridge
             .expect("Unable to create BridgeStream")
