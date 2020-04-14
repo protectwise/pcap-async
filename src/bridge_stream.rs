@@ -163,12 +163,9 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
             }
         }
 
-        let mut report_count = 0;
-        for state in states.iter() {
-            if state.reported || state.complete {
-                report_count = report_count + 1;
-            }
-        }
+        let report_count = states.iter().filter(|state| {
+            state.reported || state.complete
+        }).count();
 
         let res = if report_count == states.len() {
             // We much ensure that all interfaces have reported.
@@ -357,7 +354,7 @@ mod tests {
         let base_time = std::time::SystemTime::UNIX_EPOCH;
         let mut packets = vec![];
         for s in range {
-            let d = base_time + std::time::Duration::from_secs(s as _);
+            let d= base_time + std::time::Duration::from_secs(s as _);
             let p = Packet::new(d, 0, 0, vec![]);
             packets.push(p)
         }
