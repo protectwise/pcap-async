@@ -2,7 +2,7 @@ mod container;
 mod iterator;
 
 pub use container::Container as Packets;
-pub use iterator::{PacketIteratorItem, PacketIterator};
+pub use iterator::{PacketIterator, PacketIteratorItem};
 
 use crate::Error;
 

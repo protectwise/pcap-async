@@ -64,8 +64,8 @@ mod tests {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
-        let packet_provider =
-            PacketStream::new(Config::default(), std::sync::Arc::clone(&handle)).expect("Failed to build");
+        let packet_provider = PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
+            .expect("Failed to build");
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Result<Vec<_>, Error> = fut_packets.await.into_iter().collect();
         let packets = packets

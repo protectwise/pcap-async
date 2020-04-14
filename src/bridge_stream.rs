@@ -18,8 +18,7 @@ use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::time::Delay;
 
-struct BridgeStreamState<I: Iterator<Item = PacketIteratorItem>>
-{
+struct BridgeStreamState<I: Iterator<Item = PacketIteratorItem>> {
     it: I,
     existing: Vec<Packet>,
     current: Vec<Packet>,
@@ -29,28 +28,32 @@ struct BridgeStreamState<I: Iterator<Item = PacketIteratorItem>>
 }
 
 #[pin_project]
-pub struct BridgeStream<I: Iterator<Item = PacketIteratorItem>>
-{
+pub struct BridgeStream<I: Iterator<Item = PacketIteratorItem>> {
     retry_after: std::time::Duration,
     stream_states: VecDeque<BridgeStreamState<I>>,
 }
 
 impl<I: Iterator<Item = PacketIteratorItem>> BridgeStream<I> {
-    pub fn new(config: Config, handles: Vec<Arc<Handle>>) -> Result<BridgeStream<PacketIterator>, Error> {
-        let states = handles.into_iter().map(|h| {
-            config.activate_handle(Arc::clone(&h)).unwrap(); //TODO use the Try fror iterops
-            let it = PacketIterator::new(&config, &h);
-            let new_state = BridgeStreamState {
-                it: it,
-                existing: Vec::new(),
-                current: Vec::new(),
-                complete: false,
-                reported: false,
-                delaying: None,
-            };
-            new_state
-
-        }).collect::<VecDeque<_>>();
+    pub fn new(
+        config: Config,
+        handles: Vec<Arc<Handle>>,
+    ) -> Result<BridgeStream<PacketIterator>, Error> {
+        let states = handles
+            .into_iter()
+            .map(|h| {
+                config.activate_handle(Arc::clone(&h)).unwrap(); //TODO use the Try fror iterops
+                let it = PacketIterator::new(&config, &h);
+                let new_state = BridgeStreamState {
+                    it: it,
+                    existing: Vec::new(),
+                    current: Vec::new(),
+                    complete: false,
+                    reported: false,
+                    delaying: None,
+                };
+                new_state
+            })
+            .collect::<VecDeque<_>>();
 
         Ok(BridgeStream {
             retry_after: config.retry_after().to_owned(),
@@ -59,22 +62,22 @@ impl<I: Iterator<Item = PacketIteratorItem>> BridgeStream<I> {
     }
 
     fn from_iterators(config: &Config, its: Vec<I>) -> Result<BridgeStream<I>, Error> {
-        let states = its.into_iter().map(|it| {
-            BridgeStreamState {
+        let states = its
+            .into_iter()
+            .map(|it| BridgeStreamState {
                 it: it,
                 existing: Vec::new(),
                 current: Vec::new(),
                 complete: false,
                 reported: false,
                 delaying: None,
-            }
-        }).collect::<VecDeque<_>>();
+            })
+            .collect::<VecDeque<_>>();
 
         Ok(BridgeStream {
             retry_after: config.retry_after().to_owned(),
             stream_states: states,
         })
-
     }
 }
 
@@ -116,9 +119,7 @@ fn gather_packets<I: Iterator<Item = PacketIteratorItem>>(
     to_sort
 }
 
-impl<I: Iterator<Item = PacketIteratorItem>> Stream
-    for BridgeStream<I>
-{
+impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
     type Item = StreamItem<Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -154,10 +155,10 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream
                     state.complete = true;
                     continue;
                 }
-               Some(PacketIteratorItem::Packets(v)) => {
-                   trace!("Adding {} packets to current", v.len());
-                   state.reported = true;
-                   state.current.extend(v);
+                Some(PacketIteratorItem::Packets(v)) => {
+                    trace!("Adding {} packets to current", v.len());
+                    state.reported = true;
+                    state.current.extend(v);
                 }
             }
         }
@@ -208,6 +209,24 @@ mod tests {
     use futures::{Future, Stream};
     use std::io::Cursor;
     use std::path::PathBuf;
+    use failure::_core::ops::RangeFull;
+    use std::ops::Range;
+
+    #[pin_project]
+    struct TransformStream<I, S: Stream<Item = I> + Unpin> {
+        stream: S
+    }
+
+    impl <I, S: Stream<Item = I> + Unpin> Stream for TransformStream<I, S> {
+        type Item = Poll<Option<I>>;
+        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let mut this = self.project();
+            match Pin::new(&mut this.stream).poll_next(cx) {
+                Poll::Ready(None) => Poll::Ready(None),
+                x => Poll::Ready(Some(x))
+            }
+        }
+    }
 
     #[tokio::test]
     async fn packets_from_file() {
@@ -222,12 +241,10 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packet_stream =
-            PacketIterator::new(&Config::default(), &Arc::clone(&handle));
+        let packet_stream = PacketIterator::new(&Config::default(), &Arc::clone(&handle));
 
-        let packet_provider =
-            BridgeStream::from_iterators(&Config::default(), vec![packet_stream])
-                .expect("Failed to build");
+        let packet_provider = BridgeStream::from_iterators(&Config::default(), vec![packet_stream])
+            .expect("Failed to build");
 
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Vec<_> = fut_packets
@@ -275,12 +292,10 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packet_stream =
-            PacketIterator::new(&Config::default(), &Arc::clone(&handle));
+        let packet_stream = PacketIterator::new(&Config::default(), &Arc::clone(&handle));
 
-        let packet_provider =
-            BridgeStream::from_iterators(&Config::default(), vec![packet_stream])
-                .expect("Failed to build");
+        let packet_provider = BridgeStream::from_iterators(&Config::default(), vec![packet_stream])
+            .expect("Failed to build");
 
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
@@ -308,11 +323,9 @@ mod tests {
         let _ = env_logger::try_init();
 
         let handle = Handle::lookup().expect("No handle created");
-        let packet_stream =
-            PacketIterator::new(&Config::default(), &Arc::clone(&handle));
+        let packet_stream = PacketIterator::new(&Config::default(), &Arc::clone(&handle));
 
-        let stream =
-            BridgeStream::from_iterators(&Config::default(), vec![packet_stream]);
+        let stream = BridgeStream::from_iterators(&Config::default(), vec![packet_stream]);
 
         assert!(
             stream.is_ok(),
@@ -330,8 +343,7 @@ mod tests {
                 .to_owned(),
         );
         let handle = Handle::lookup().expect("No handle created");
-        let packet_stream =
-            PacketIterator::new(&Config::default(), &Arc::clone(&handle));
+        let packet_stream = PacketIterator::new(&Config::default(), &Arc::clone(&handle));
 
         let stream = BridgeStream::from_iterators(&cfg, vec![packet_stream]);
 
@@ -340,6 +352,37 @@ mod tests {
             format!("Could not build stream {}", stream.err().unwrap())
         );
     }
+
+    fn make_packets(range: Range<usize>) -> Vec<Packet> {
+        let base_time = std::time::SystemTime::UNIX_EPOCH;
+        let mut packets = vec![];
+        for s in range {
+            let d = base_time + std::time::Duration::from_secs(s as _);
+            let p = Packet::new(d, 0, 0, vec![]);
+            packets.push(p)
+        }
+        packets
+    }
+
+    #[tokio::test]
+    async fn bridge_returns_pending_if_all_downstreams_are_pending() {
+        let stream1 = vec![PacketIteratorItem::NoPackets].into_iter();//make_packets(0..15);
+        let stream2 = vec![PacketIteratorItem::NoPackets].into_iter();
+        let mut cfg = Config::default();
+
+        let bridge = BridgeStream::from_iterators(&cfg, vec![stream1, stream2]).expect("Unable to create bridge.");
+        let transformed = TransformStream{
+            stream: bridge
+        };
+
+        let mut result = transformed.collect::<Vec<_>>().await;
+        println!("result {:?}", result);
+        match result.first() {
+            Some(Poll::Pending) => {},
+            _ => panic!("Should be pending and not finished")
+        }
+    }
+
     #[tokio::test]
     async fn packets_come_out_time_ordered() {
         let mut packets1 = vec![];
@@ -348,19 +391,10 @@ mod tests {
         let base_time = std::time::SystemTime::UNIX_EPOCH;
         let cfg = Config::default();
 
-        for s in 0..20 {
-            let d = base_time + std::time::Duration::from_secs(s);
-            let p = Packet::new(d, 0, 0, vec![]);
-            packets1.push(p)
-        }
+        packets1.extend(make_packets(0..20));
+        packets2.extend(make_packets(5..15));
 
-        for s in 5..15 {
-            let d = base_time + std::time::Duration::from_secs(s);
-            let p = Packet::new(d, 0, 0, vec![]);
-            packets2.push(p)
-        }
-
-        let item1: PacketIteratorItem= PacketIteratorItem::Packets(packets1);
+        let item1: PacketIteratorItem = PacketIteratorItem::Packets(packets1);
         let item2: PacketIteratorItem = PacketIteratorItem::Packets(packets2);
 
         let stream1 = vec![item1].into_iter();

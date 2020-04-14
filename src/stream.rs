@@ -63,7 +63,7 @@ impl Stream for PacketStream {
                 debug!("Stream was complete");
                 *this.complete = true;
                 Poll::Ready(None)
-            },
+            }
             Some(PacketIteratorItem::Err(e)) => Poll::Ready(Some(Err(e))),
             Some(PacketIteratorItem::NoPackets) => {
                 trace!("No packets returned, and haven't delayed");
@@ -107,9 +107,7 @@ mod tests {
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|p| {
-                p.data().len() == p.actual_length() as _
-            })
+            .filter(|p| p.data().len() == p.actual_length() as _)
             .collect();
 
         handle.interrupt();

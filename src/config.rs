@@ -1,6 +1,6 @@
-use std;
-use crate::handle::Handle;
 use crate::errors::Error;
+use crate::handle::Handle;
+use std;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -58,7 +58,7 @@ impl Config {
         self
     }
 
-    pub fn activate_handle(&self, handle:  Arc<Handle>) -> Result<(), Error>{
+    pub fn activate_handle(&self, handle: Arc<Handle>) -> Result<(), Error> {
         let live_capture = handle.is_live_capture();
 
         if live_capture {
