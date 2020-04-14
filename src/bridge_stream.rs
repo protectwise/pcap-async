@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::errors::Error;
 use crate::handle::Handle;
 use crate::packet::Packet;
-use crate::packet_future::PacketFuture;
 use crate::pcap_util;
 
 use crate::stream::StreamItem;
