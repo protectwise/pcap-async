@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::errors::Error;
 use crate::handle::Handle;
-use crate::packet::Packet;
+use crate::packet::{Packet, PacketIterator, PacketIteratorItem};
 use crate::pcap_util;
 
 use crate::stream::StreamItem;
@@ -18,53 +18,48 @@ use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::time::Delay;
 
-struct BridgeStreamState<E, T>
-where
-    E: Fail + Sync + Send,
-    T: Stream<Item = StreamItem<E>> + Sized + Unpin,
+struct BridgeStreamState<I: Iterator<Item = PacketIteratorItem>>
 {
-    stream: T,
+    it: I,
     existing: Vec<Packet>,
     current: Vec<Packet>,
     complete: bool,
 }
 
 #[pin_project]
-pub struct BridgeStream<E: Fail + Sync + Send, T>
-where
-    T: Stream<Item = StreamItem<E>> + Sized + Unpin,
+pub struct BridgeStream<I: Iterator<Item = PacketIteratorItem>>
 {
     retry_after: std::time::Duration,
-    stream_states: VecDeque<BridgeStreamState<E, T>>,
+    stream_states: VecDeque<BridgeStreamState<I>>,
     tick: Option<Delay>,
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
-    pub fn new(
-        retry_after: std::time::Duration,
-        streams: Vec<T>,
-    ) -> Result<BridgeStream<E, T>, Error> {
-        let mut stream_states = VecDeque::with_capacity(streams.len());
-        for stream in streams {
+impl<I: Iterator<Item = PacketIteratorItem>> BridgeStream<I> {
+    pub fn new(config: Config, handles: Vec<Arc<Handle>>) -> Result<BridgeStream<PacketIterator>, Error> {
+        let its = handles.into_iter().map(|h| {
+            config.activate_handle(Arc::clone(&h)).unwrap(); //TODO use the Try fror iterops
+            let it = PacketIterator::new(&config, &h);
             let new_state = BridgeStreamState {
-                stream: stream,
+                it: it,
                 existing: Vec::new(),
                 current: Vec::new(),
                 complete: false,
             };
-            stream_states.push_back(new_state);
-        }
+            new_state
+
+        }).collect::<VecDeque<_>>();
 
         Ok(BridgeStream {
-            retry_after: retry_after,
-            stream_states: stream_states,
-            tick: Some(tokio::time::delay_for(retry_after)),
+            retry_after: config.retry_after().to_owned(),
+            stream_states: its,
+            tick: Some(tokio::time::delay_for(config.retry_after().to_owned())),
         })
+
     }
 }
 
-fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
-    stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
+fn gather_packets<I: Iterator<Item = PacketIteratorItem>>(
+    stream_states: &mut VecDeque<BridgeStreamState<I>>,
 ) -> Vec<Packet> {
     let mut to_sort = vec![];
     let mut gather_to: Option<SystemTime> = None;
@@ -101,40 +96,36 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
     to_sort
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream
-    for BridgeStream<E, T>
+impl<I: Iterator<Item = PacketIteratorItem>> Stream
+    for BridgeStream<I>
 {
-    type Item = StreamItem<E>;
+    type Item = StreamItem<Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         //return Poll::Pending;
         let mut this = self.project();
         trace!("Interfaces: {:?}", this.stream_states.len());
-        let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
+        let states: &mut VecDeque<BridgeStreamState<I>> = this.stream_states;
         let retry_after: &mut std::time::Duration = this.retry_after;
 
         let mut delay_count = 0;
         for state in states.iter_mut() {
 
-            match Pin::new(&mut state.stream).poll_next(cx) {
-                Poll::Pending => {
+            match state.it.next() {
+                Some(PacketIteratorItem::NoPackets) => {
                     trace!("Pending");
                     delay_count = delay_count + 1;
-                    //state.delaying = Some(tokio::time::delay_for(*retry_after));
                     continue;
                 }
-                Poll::Ready(Some(Err(e))) => {
+                Some(PacketIteratorItem::Err(e)) => {
                     return Poll::Ready(Some(Err(e)));
                 }
-                Poll::Ready(None) => {
+                None => {
                     trace!("Interface has completed");
                     state.complete = true;
                     continue;
                 }
-                Poll::Ready(Some(Ok(v))) => {
-                    if v.is_empty() {
-                        continue;
-                    }
+               Some(PacketIteratorItem::Packets(v)) => {
                     trace!("Adding {} packets to current", v.len());
                     state.current.extend(v);
                 }

@@ -1,4 +1,7 @@
 use std;
+use crate::handle::Handle;
+use crate::errors::Error;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -53,6 +56,26 @@ impl Config {
     pub fn with_retry_after(&mut self, amt: std::time::Duration) -> &mut Self {
         self.retry_after = amt;
         self
+    }
+
+    pub fn activate_handle(&self, handle:  Arc<Handle>) -> Result<(), Error>{
+        let live_capture = handle.is_live_capture();
+
+        if live_capture {
+            handle
+                .set_snaplen(self.snaplen())?
+                .set_non_block()?
+                .set_promiscuous()?
+                .set_timeout(&std::time::Duration::from_secs(0))?
+                .set_buffer_size(self.buffer_size())?
+                .activate()?;
+
+            if let Some(bpf) = self.bpf() {
+                let bpf = handle.compile_bpf(bpf)?;
+                handle.set_bpf(bpf)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn new(

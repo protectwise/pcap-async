@@ -55,9 +55,8 @@ impl PacketIterator {
 }
 
 pub enum PacketIteratorItem {
-    Complete,
-    Err(Error),
     NoPackets,
+    Err(Error),
     Packets(Vec<Packet>),
 }
 
@@ -66,7 +65,7 @@ fn dispatch(
     live_capture: bool,
     max_packets_read: usize,
     snaplen: u32,
-) -> PacketIteratorItem {
+) -> Option<PacketIteratorItem> {
     let mut packets = Packets::new(max_packets_read, snaplen);
 
     while !pcap_handle.interrupted() {
@@ -84,24 +83,24 @@ fn dispatch(
         match ret_code {
             -2 => {
                 debug!("Pcap breakloop invoked");
-                return PacketIteratorItem::Complete;
+                return None;
             }
             -1 => {
                 let err = crate::pcap_util::convert_libpcap_error(pcap_handle.as_mut_ptr());
                 error!("Error encountered when calling pcap_dispatch: {}", err);
-                return PacketIteratorItem::Err(err);
+                return Some(PacketIteratorItem::Err(err));
             }
             0 => {
                 if packets.is_empty() {
                     trace!("No packets in buffer");
-                    return PacketIteratorItem::NoPackets;
+                    return Some(PacketIteratorItem::NoPackets);
                 } else {
                     if !live_capture {
                         debug!("Not live capture, calling breakloop");
                         unsafe { pcap_sys::pcap_breakloop(pcap_handle.as_mut_ptr()) }
                     }
                     trace!("Capture loop captured {} available packets", packets.len());
-                    return PacketIteratorItem::Packets(packets.into_inner());
+                    return Some(PacketIteratorItem::Packets(packets.into_inner()));
                 }
             }
             x if x > 0 => {
@@ -111,13 +110,13 @@ fn dispatch(
                         "Capture loop captured up to maximum packets of {}",
                         max_packets_read
                     );
-                    return PacketIteratorItem::Packets(packets.into_inner());
+                    return Some(PacketIteratorItem::Packets(packets.into_inner()));
                 }
             }
             _ => {
                 let err = crate::pcap_util::convert_libpcap_error(pcap_handle.as_mut_ptr());
                 error!("Pcap dispatch returned {}: {:?}", ret_code, err);
-                return PacketIteratorItem::Err(err);
+                return Some(PacketIteratorItem::Err(err));
             }
         }
     }
@@ -125,9 +124,9 @@ fn dispatch(
     debug!("Interrupt invoked");
 
     if packets.is_empty() {
-        PacketIteratorItem::Complete
+       None
     } else {
-        PacketIteratorItem::Packets(packets.into_inner())
+        Some(PacketIteratorItem::Packets(packets.into_inner()))
     }
 }
 
@@ -146,6 +145,10 @@ impl Iterator for PacketIterator {
             self.snaplen,
         );
 
-        Some(r)
+        if let None = r {
+            self.is_complete = true;
+        }
+
+        r
     }
 }

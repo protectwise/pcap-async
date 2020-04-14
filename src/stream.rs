@@ -27,22 +27,7 @@ pub struct PacketStream {
 
 impl PacketStream {
     pub fn new(config: Config, handle: Arc<Handle>) -> Result<PacketStream, Error> {
-        let live_capture = handle.is_live_capture();
-
-        if live_capture {
-            handle
-                .set_snaplen(config.snaplen())?
-                .set_non_block()?
-                .set_promiscuous()?
-                .set_timeout(&std::time::Duration::from_secs(0))?
-                .set_buffer_size(config.buffer_size())?
-                .activate()?;
-
-            if let Some(bpf) = config.bpf() {
-                let bpf = handle.compile_bpf(bpf)?;
-                handle.set_bpf(bpf)?;
-            }
-        }
+        config.activate_handle(Arc::clone(&handle))?;
 
         let inner = PacketIterator::new(&config, &handle);
 
@@ -76,13 +61,10 @@ impl Stream for PacketStream {
         match this.inner.next() {
             None => {
                 debug!("Stream was complete");
+                *this.complete = true;
                 Poll::Ready(None)
             },
             Some(PacketIteratorItem::Err(e)) => Poll::Ready(Some(Err(e))),
-            Some(PacketIteratorItem::Complete) => {
-                *this.complete = true;
-                Poll::Ready(None)
-            }
             Some(PacketIteratorItem::NoPackets) => {
                 trace!("No packets returned, and haven't delayed");
                 *this.delaying = Some(tokio::time::delay_for(*this.config.retry_after()));
