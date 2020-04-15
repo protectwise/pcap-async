@@ -91,12 +91,12 @@ fn gather_packets<I: Iterator<Item = PacketIteratorItem>>(
         }
     }
     if let Some(ts) = gather_to {
-        println!("Timestamp: {:?}", ts);
+        trace!("Timestamp: {:?}", ts);
         for state in stream_states.iter_mut() {
             let current = std::mem::replace(&mut state.current, vec![]);
             let t: (Vec<_>, Vec<_>) = current.into_iter().partition(|p| *p.timestamp() < ts);
             let (before_ts, after_ts) = t;
-            println!(
+            trace!(
                 "before_ts:{:?} \nafter_ts:{:?}",
                 before_ts,
                 after_ts
@@ -113,7 +113,7 @@ fn gather_packets<I: Iterator<Item = PacketIteratorItem>>(
     }
 
     to_sort.sort_by_key(|p| *p.timestamp());
-    println!("to_sort: {:?}", to_sort);
+    trace!("to_sort: {:?}", to_sort);
     to_sort
 }
 
@@ -123,10 +123,10 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         //return Poll::Pending;
         let mut this = self.project();
-        println!("Interfaces: {:?}", this.stream_states.len());
+        trace!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<I>> = this.stream_states;
         let retry_after: &mut std::time::Duration = this.retry_after;
-        println!("retry_after: {:?}", retry_after);
+        trace!("retry_after: {:?}", retry_after);
 
         let mut delay_count = 0;
         for state in states.iter_mut() {
@@ -134,7 +134,7 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
                 //Check the interface for a delay..
                 if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
                     delay_count = delay_count + 1;
-                    println!("Delaying");
+                    trace!("Delaying {:?}", existing_delay);
                     state.delaying = Some(existing_delay);
                     continue; // do another iteration on another iface
                 }
@@ -142,7 +142,7 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
 
             match state.it.next() {
                 Some(PacketIteratorItem::NoPackets) => {
-                    println!("Pending");
+                    trace!("Pending");
                     state.delaying = Some(tokio::time::delay_for(*retry_after));
                     state.reported = true;
                     delay_count = delay_count + 1;
@@ -152,12 +152,12 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
                     return Poll::Ready(Some(Err(e)));
                 }
                 None => {
-                    println!("Interface has completed");
+                    trace!("Interface has completed");
                     state.complete = true;
                     continue;
                 }
                 Some(PacketIteratorItem::Packets(v)) => {
-                    println!("Adding {} packets to current", v.len());
+                    trace!("Adding {} packets to current", v.len());
                     state.reported = true;
                     state.current.extend(v);
                 }
@@ -169,15 +169,15 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
         }).count();
 
         let res = if report_count == states.len() {
-            // We much ensure that all interfaces have reported.
-            println!("All ifaces have reported.");
+            // We must ensure that all interfaces have reported.
+            trace!("All ifaces have reported.");
 
             for state in states.iter_mut() {
                 state.reported = false;
             }
             gather_packets(states)
         } else {
-            println!("{} / {} iface reported.", report_count, states.len());
+            trace!("{} / {} iface reported.", report_count, states.len());
             vec![]
         };
 
@@ -189,18 +189,18 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
         if !res.is_empty() {
             return Poll::Ready(Some(Ok(res)));
         } else if delay_count >= states.len() && !states.is_empty()  {
-            println!("All ifaces are delayed.");
+            trace!("All ifaces are delayed.");
             return Poll::Pending;
         } else {
-            println!("All ifaces are complete.");
+            trace!("All ifaces are complete.");
             return Poll::Ready(None);
         }
 
         // if res.is_empty() && states.is_empty() {
-        //     println!("All ifaces are complete.");
+        //     trace!("All ifaces are complete.");
         //     return Poll::Ready(None);
         // } else if res.is_empty() && delay_count >= states.len() && !states.is_empty()  {
-        //     println!("All ifaces are delayed.");
+        //     trace!("All ifaces are delayed.");
         //     return Poll::Pending;
         // } else {
         //     return Poll::Ready(Some(Ok(res)));
@@ -220,21 +220,22 @@ mod tests {
     use failure::_core::ops::RangeFull;
     use std::ops::Range;
 
-    #[pin_project]
-    struct TransformStream<I, S: Stream<Item = I> + Unpin> {
-        stream: S
-    }
-
-    impl <I, S: Stream<Item = I> + Unpin> Stream for TransformStream<I, S> {
-        type Item = Poll<Option<I>>;
-        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            let mut this = self.project();
-            match Pin::new(&mut this.stream).poll_next(cx) {
-                Poll::Ready(None) => Poll::Ready(None),
-                x => Poll::Ready(Some(x))
-            }
-        }
-    }
+    // #[pin_project]
+    // struct TransformStream<I, S: Stream<Item = I> + Unpin> {
+    //     stream: S
+    // }
+    //
+    // impl <I, S: Stream<Item = I> + Unpin> Stream for TransformStream<I, S> {
+    //     type Item = Poll<Option<I>>;
+    //     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    //         let mut this = self.project();
+    //         match Pin::new(&mut this.stream).poll_next(cx) {
+    //             Poll::Ready(None) => Poll::Ready(None),
+    //             Poll::Pending => Poll::Pending,
+    //             x => Poll::Ready(Some(x))
+    //         }
+    //     }
+    // }
 
     #[tokio::test]
     async fn packets_from_file() {
@@ -372,24 +373,24 @@ mod tests {
         packets
     }
 
-    #[tokio::test]
-    async fn bridge_returns_pending_if_all_downstreams_are_pending() {
-        let stream1 = vec![PacketIteratorItem::NoPackets].into_iter();//make_packets(0..15);
-        let stream2 = vec![PacketIteratorItem::NoPackets].into_iter();
-        let mut cfg = Config::default();
-
-        let bridge = BridgeStream::from_iterators(&cfg, vec![stream1, stream2]).expect("Unable to create bridge.");
-        let transformed = TransformStream{
-            stream: bridge
-        };
-
-        let mut result = transformed.collect::<Vec<_>>().await;
-        info!("result {:?}", result);
-        match result.first() {
-            Some(Poll::Pending) => {},
-            _ => panic!("Should be pending and not finished")
-        }
-    }
+    // #[tokio::test]
+    // async fn bridge_returns_pending_if_all_downstreams_are_pending() {
+    //     let stream1 = vec![PacketIteratorItem::NoPackets].into_iter();//make_packets(0..15);
+    //     let stream2 = vec![PacketIteratorItem::NoPackets].into_iter();
+    //     let mut cfg = Config::default();
+    //
+    //     let bridge = BridgeStream::from_iterators(&cfg, vec![stream1, stream2]).expect("Unable to create bridge.");
+    //     let transformed = TransformStream{
+    //         stream: bridge
+    //     };
+    //
+    //     let mut result = transformed.collect::<Vec<_>>().await;
+    //     info!("result {:?}", result);
+    //     match result.first() {
+    //         Some(Poll::Pending) => {},
+    //         _ => panic!("Should be pending and not finished")
+    //     }
+    // }
 
     #[tokio::test]
     async fn packets_come_out_time_ordered() {
@@ -409,9 +410,9 @@ mod tests {
             .flatten()
             .collect::<Vec<_>>();
 
-        println!("packets1 {:?}", packets1);
-        println!("packets2 {:?}", packets2);
-        println!("packets3 {:?}", packets3);
+        trace!("packets1 {:?}", packets1);
+        trace!("packets2 {:?}", packets2);
+        trace!("packets3 {:?}", packets3);
 
         let item1: PacketIteratorItem = PacketIteratorItem::Packets(packets1);
         let item2: PacketIteratorItem = PacketIteratorItem::Packets(packets2);
