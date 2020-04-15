@@ -393,9 +393,9 @@ mod tests {
         let base_time = std::time::SystemTime::UNIX_EPOCH;
         let cfg = Config::default();
 
-        packets1.extend(make_packets(0..7));
-        packets2.extend(make_packets(7..20));
-        packets3.extend(make_packets(7..15));
+        packets1.extend(make_packets(0..3));
+        packets2.extend(make_packets(3..10));
+        packets3.extend(make_packets(3..5));
 
         let all_packets: Vec<Packet> = vec![packets1.clone(), packets2.clone(), packets3.clone()]
             .into_iter()
@@ -411,7 +411,7 @@ mod tests {
         let item3: PacketIteratorItem = PacketIteratorItem::Packets(packets3);
 
         let stream1 = vec![item1, PacketIteratorItem::NoPackets, item2].into_iter();
-        let stream2 = vec![item3].into_iter();
+        let stream2 = vec![item3, PacketIteratorItem::NoPackets].into_iter();
 
         let bridge = BridgeStream::from_iterators(&cfg, vec![stream1, stream2])
             .expect("Unable to create BridgeStream");
