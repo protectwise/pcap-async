@@ -92,30 +92,32 @@ fn gather_packets<I: Iterator<Item = PacketIteratorItem>>(
                 .map(|ts| std::cmp::min(ts, *p.timestamp()))
                 .or(Some(*p.timestamp()));
         }
+        //Add existing
         let v = std::mem::replace(&mut iface.existing, vec![]);
         to_sort.extend(v);
     }
-    trace!("Have {} existing packets", to_sort.len());
+    println!("Have {:?} existing packets", to_sort);
     if let Some(ts) = gather_to {
         for state in stream_states.iter_mut() {
             let current = std::mem::replace(&mut state.current, vec![]);
             let t: (Vec<_>, Vec<_>) = current.into_iter().partition(|p| *p.timestamp() < ts);
             let (before_ts, after_ts) = t;
-            trace!(
-                "Adding {} packets based on timestamp, {} packets adding to existing",
-                before_ts.len(),
-                after_ts.len()
+            println!(
+                "before_ts:{:?} \nafter_ts:{:?}",
+                before_ts,
+                after_ts
             );
             to_sort.extend(before_ts);
             state.existing = after_ts;
         }
     } else {
         for iface in stream_states.iter_mut() {
-            trace!("Moving {} packets into existing", iface.current.len());
+            println!("Moving {} packets into existing", iface.current.len());
             std::mem::swap(&mut iface.existing, &mut iface.current);
         }
     }
     to_sort.sort_by_key(|p| *p.timestamp());
+    println!("to_sort: {:?}", to_sort);
     to_sort
 }
 
@@ -125,8 +127,9 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         //return Poll::Pending;
         let mut this = self.project();
-        trace!("Interfaces: {:?}", this.stream_states.len());
+        println!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<I>> = this.stream_states;
+        let retry_after: &mut std::time::Duration = this.retry_after;
 
         let mut delay_count = 0;
         for state in states.iter_mut() {
@@ -134,7 +137,7 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
                 //Check the interface for a delay..
                 if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
                     delay_count = delay_count + 1;
-                    trace!("Delaying");
+                    println!("Delaying");
                     state.delaying = Some(existing_delay);
                     continue; // do another iteration on another iface
                 }
@@ -142,7 +145,8 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
 
             match state.it.next() {
                 Some(PacketIteratorItem::NoPackets) => {
-                    trace!("Pending");
+                    println!("Pending");
+                    state.delaying = Some(tokio::time::delay_for(*retry_after));
                     state.reported = true;
                     delay_count = delay_count + 1;
                     continue;
@@ -151,12 +155,12 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
                     return Poll::Ready(Some(Err(e)));
                 }
                 None => {
-                    trace!("Interface has completed");
+                    println!("Interface has completed");
                     state.complete = true;
                     continue;
                 }
                 Some(PacketIteratorItem::Packets(v)) => {
-                    trace!("Adding {} packets to current", v.len());
+                    println!("Adding {} packets to current", v.len());
                     state.reported = true;
                     state.current.extend(v);
                 }
@@ -169,14 +173,14 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
 
         let res = if report_count == states.len() {
             // We much ensure that all interfaces have reported.
-            trace!("All ifaces have reported.");
+            println!("All ifaces have reported.");
 
             for state in states.iter_mut() {
                 state.reported = false;
             }
             gather_packets(states)
         } else {
-            trace!("{} / {} iface reported.", report_count, states.len());
+            println!("{} / {} iface reported.", report_count, states.len());
             vec![]
         };
 
@@ -186,10 +190,10 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
         });
 
         if res.is_empty() && states.is_empty() {
-            trace!("All ifaces are complete.");
+            println!("All ifaces are complete.");
             return Poll::Ready(None);
-        } else if delay_count >= states.len() && !states.is_empty() {
-            trace!("All ifaces are delayed.");
+        } else if res.is_empty() && delay_count >= states.len() && !states.is_empty()  {
+            println!("All ifaces are delayed.");
             return Poll::Pending;
         } else {
             return Poll::Ready(Some(Ok(res)));
@@ -384,80 +388,124 @@ mod tests {
     async fn packets_come_out_time_ordered() {
         let mut packets1 = vec![];
         let mut packets2 = vec![];
+        let mut packets3 = vec![];
 
         let base_time = std::time::SystemTime::UNIX_EPOCH;
         let cfg = Config::default();
 
-        packets1.extend(make_packets(0..20));
-        packets2.extend(make_packets(5..15));
+        packets1.extend(make_packets(0..7));
+        packets2.extend(make_packets(7..20));
+        packets3.extend(make_packets(7..15));
+
+        let all_packets: Vec<Packet> = vec![packets1.clone(), packets2.clone(), packets3.clone()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        println!("packets1 {:?}", packets1);
+        println!("packets2 {:?}", packets2);
+        println!("packets3 {:?}", packets3);
 
         let item1: PacketIteratorItem = PacketIteratorItem::Packets(packets1);
         let item2: PacketIteratorItem = PacketIteratorItem::Packets(packets2);
+        let item3: PacketIteratorItem = PacketIteratorItem::Packets(packets3);
 
-        let stream1 = vec![item1].into_iter();
-        let stream2 = vec![item2].into_iter();
+        let stream1 = vec![item1, PacketIteratorItem::NoPackets, item2].into_iter();
+        let stream2 = vec![item3].into_iter();
 
-        let bridge = BridgeStream::from_iterators(&cfg, vec![stream1, stream2]);
+        let bridge = BridgeStream::from_iterators(&cfg, vec![stream1, stream2])
+            .expect("Unable to create BridgeStream");
 
         let mut result = bridge
-            .expect("Unable to create BridgeStream")
             .collect::<Vec<StreamItem<Error>>>()
             .await;
         info!("Result {:?}", result);
 
-        assert_eq!(result.len(), 2);
-        let batch1 = result
-            .first()
-            .expect("Expected value")
-            .as_ref()
-            .expect("Err not expected");
-        let batch2 = result
-            .last()
-            .expect("Expected value")
-            .as_ref()
-            .expect("Err not expected");
-        let (batch1_min, batch1_max) = (batch1.first(), batch1.last());
-        let (batch2_min, batch2_max) = (batch2.first(), batch2.last());
-        assert_eq!(
-            batch1_min
-                .unwrap()
-                .timestamp()
-                .duration_since(base_time)
-                .unwrap()
-                .as_secs(),
-            0
-        );
-        assert_eq!(
-            batch1_max
-                .unwrap()
-                .timestamp()
-                .duration_since(base_time)
-                .unwrap()
-                .as_secs(),
-            13
-        );
-        assert_eq!(
-            batch2_min
-                .unwrap()
-                .timestamp()
-                .duration_since(base_time)
-                .unwrap()
-                .as_secs(),
-            14
-        );
-        assert_eq!(
-            batch2_max
-                .unwrap()
-                .timestamp()
-                .duration_since(base_time)
-                .unwrap()
-                .as_secs(),
-            19
-        );
+        assert_eq!(result.len(), 4);
+        let flattened: Vec<Packet> = result
+            .into_iter()
+            .map(|r| r.unwrap())
+            .flatten()
+            .collect::<Vec<_>>();
+        let result_times = flattened.iter().map(|p| p.timestamp).collect::<Vec<_>>();
+        let mut all_packet_time = all_packets.iter().map(|p| p.timestamp).collect::<Vec<_>>();
+        all_packet_time.sort();
 
-        let flat_result: Vec<Packet> = result.drain(..).flat_map(|r| r.unwrap()).collect();
-        assert_eq!(flat_result.len(), 30); //30 because 20 + 10 from the time rangess specified above
+        assert_eq!(result_times.len(), all_packet_time.len());
 
-        info!("Results: {:?}", result);
+        assert_eq!(result_times, all_packet_time);
+        // let batch1 = result
+        //     .get(0)
+        //     .expect("Expected value")
+        //     .as_ref()
+        //     .expect("Err not expected");
+        // let batch2 = result
+        //     .get(1)
+        //     .expect("Expected value")
+        //     .as_ref()
+        //     .expect("Err not expected");
+        // let batch3 = result
+        //     .get(2)
+        //     .expect("Expected value")
+        //     .as_ref()
+        //     .expect("Err not expected");
+        // let batch4 = result
+        //     .get(3)
+        //     .expect("Expected value")
+        //     .as_ref()
+        //     .expect("Err not expected");
+        //
+        // println!("batch1: {:?}",batch1);
+        // println!("batch2: {:?}",batch2);
+        // println!("batch3: {:?}",batch3);
+        // println!("batch3: {:?}",batch4);
+        //
+        // let (batch1_min, batch1_max) = (batch1.first(), batch1.last());
+        // let (batch2_min, batch2_max) = (batch2.first(), batch2.last());
+        // let (batch3_min, batch3_max) = (batch3.first(), batch3.last());
+        // let (batch4_min, batch4_max) = (batch3.first(), batch3.last());
+        //
+        //
+        // assert_eq!(
+        //     batch1_min
+        //         .unwrap()
+        //         .timestamp()
+        //         .duration_since(base_time)
+        //         .unwrap()
+        //         .as_secs(),
+        //     0
+        // );
+        // assert_eq!(
+        //     batch1_max
+        //         .unwrap()
+        //         .timestamp()
+        //         .duration_since(base_time)
+        //         .unwrap()
+        //         .as_secs(),
+        //     4
+        // );
+        // assert_eq!(
+        //     batch2_min
+        //         .unwrap()
+        //         .timestamp()
+        //         .duration_since(base_time)
+        //         .unwrap()
+        //         .as_secs(),
+        //     14
+        // );
+        // assert_eq!(
+        //     batch2_max
+        //         .unwrap()
+        //         .timestamp()
+        //         .duration_since(base_time)
+        //         .unwrap()
+        //         .as_secs(),
+        //     19
+        // );
+        //
+        // let flat_result: Vec<Packet> = result.drain(..).flat_map(|r| r.unwrap()).collect();
+        // assert_eq!(flat_result.len(), 30); //30 because 20 + 10 from the time rangess specified above
+        //
+        // info!("Results: {:?}", result);
     }
 }
