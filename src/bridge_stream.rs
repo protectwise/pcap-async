@@ -32,33 +32,33 @@ pub struct BridgeStream<I: Iterator<Item = PacketIteratorItem>> {
     stream_states: VecDeque<BridgeStreamState<I>>,
 }
 
-impl<I: Iterator<Item = PacketIteratorItem>> BridgeStream<I> {
-    pub fn new(
-        config: Config,
-        handles: Vec<Arc<Handle>>,
-    ) -> Result<BridgeStream<PacketIterator>, Error> {
-        let states = handles
-            .into_iter()
-            .map(|h| {
-                config.activate_handle(Arc::clone(&h)).unwrap(); //TODO use the Try fror iterops
-                let it = PacketIterator::new(&config, &h);
-                let new_state = BridgeStreamState {
-                    it: it,
-                    current: Vec::new(),
-                    complete: false,
-                    reported: false,
-                    delaying: None,
-                };
-                new_state
-            })
-            .collect::<VecDeque<_>>();
-
-        Ok(BridgeStream {
-            retry_after: config.retry_after().to_owned(),
-            stream_states: states,
+pub fn new_bridge_stream(
+    config: Config,
+    handles: Vec<Arc<Handle>>,
+) -> Result<BridgeStream<PacketIterator>, Error> {
+    let states = handles
+        .into_iter()
+        .map(|h| {
+            config.activate_handle(Arc::clone(&h)).unwrap(); //TODO use the Try fror iterops
+            let it = PacketIterator::new(&config, &h);
+            let new_state = BridgeStreamState {
+                it: it,
+                current: Vec::new(),
+                complete: false,
+                reported: false,
+                delaying: None,
+            };
+            new_state
         })
-    }
+        .collect::<VecDeque<_>>();
 
+    Ok(BridgeStream {
+        retry_after: config.retry_after().to_owned(),
+        stream_states: states,
+    })
+}
+
+impl<I: Iterator<Item = PacketIteratorItem>> BridgeStream<I> {
     fn from_iterators(config: &Config, its: Vec<I>) -> Result<BridgeStream<I>, Error> {
         let states = its
             .into_iter()
@@ -195,16 +195,6 @@ impl<I: Iterator<Item = PacketIteratorItem>> Stream for BridgeStream<I> {
             trace!("All ifaces are complete.");
             return Poll::Ready(None);
         }
-
-        // if res.is_empty() && states.is_empty() {
-        //     trace!("All ifaces are complete.");
-        //     return Poll::Ready(None);
-        // } else if res.is_empty() && delay_count >= states.len() && !states.is_empty()  {
-        //     trace!("All ifaces are delayed.");
-        //     return Poll::Pending;
-        // } else {
-        //     return Poll::Ready(Some(Ok(res)));
-        // }
     }
 }
 
@@ -219,23 +209,6 @@ mod tests {
     use std::path::PathBuf;
     use failure::_core::ops::RangeFull;
     use std::ops::Range;
-
-    // #[pin_project]
-    // struct TransformStream<I, S: Stream<Item = I> + Unpin> {
-    //     stream: S
-    // }
-    //
-    // impl <I, S: Stream<Item = I> + Unpin> Stream for TransformStream<I, S> {
-    //     type Item = Poll<Option<I>>;
-    //     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-    //         let mut this = self.project();
-    //         match Pin::new(&mut this.stream).poll_next(cx) {
-    //             Poll::Ready(None) => Poll::Ready(None),
-    //             Poll::Pending => Poll::Pending,
-    //             x => Poll::Ready(Some(x))
-    //         }
-    //     }
-    // }
 
     #[tokio::test]
     async fn packets_from_file() {
