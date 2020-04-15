@@ -1,3 +1,9 @@
+mod container;
+mod iterator;
+
+pub use container::Container as Packets;
+pub use iterator::{PacketIteratorItem, PacketIterator};
+
 use crate::Error;
 
 use byteorder::{ByteOrder, WriteBytesExt};
@@ -6,17 +12,13 @@ use std::io::Cursor;
 
 #[derive(Clone, Debug)]
 pub struct Packet {
-    timestamp: std::time::SystemTime,
-    actual_length: u32,
-    original_length: u32,
-    data: Vec<u8>,
+    pub(crate) timestamp: std::time::SystemTime,
+    pub(crate) actual_length: u32,
+    pub(crate) original_length: u32,
+    pub(crate) data: Vec<u8>,
 }
 
 impl Packet {
-    pub fn into_data(self) -> Vec<u8> {
-        self.data
-    }
-
     pub fn into_pcap_record<T: ByteOrder>(self) -> Result<Vec<u8>, Error> {
         self.as_pcap_record::<T>()
     }
@@ -56,8 +58,8 @@ impl Packet {
     pub fn timestamp(&self) -> &std::time::SystemTime {
         &self.timestamp
     }
-    pub fn data(&self) -> &Vec<u8> {
-        &self.data
+    pub fn data(&self) -> &[u8] {
+        self.data.as_slice()
     }
     pub fn actual_length(&self) -> u32 {
         self.actual_length
@@ -91,15 +93,14 @@ mod tests {
     #[test]
     fn converts_to_record() {
         let ts = SystemTime::now();
-        let data = vec![0u8; 100];
         let packet = Packet {
             timestamp: ts,
             actual_length: 100,
             original_length: 200,
-            data: data.clone(),
+            data: vec![0u8; 100],
         };
         let bytes = packet
-            .into_pcap_record::<byteorder::LittleEndian>()
+            .as_pcap_record::<byteorder::LittleEndian>()
             .expect("Failed to convert to record");
 
         let dur = ts
@@ -136,6 +137,6 @@ mod tests {
             cursor.read_to_end(&mut read_data).expect("Failed to read"),
             100
         );
-        assert_eq!(read_data, data);
+        assert_eq!(read_data, packet.data);
     }
 }

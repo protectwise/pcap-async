@@ -3,6 +3,7 @@ use crate::{errors::Error, pcap_util, stats::Stats};
 use log::*;
 use std::os::raw::c_int;
 use std::path::Path;
+use pcap_sys::{pcap_fileno, pcap_set_immediate_mode};
 
 /// Wrapper around a pcap_t handle to indicate live or offline capture, and allow the handle to
 /// be interrupted to stop capture.
@@ -192,6 +193,14 @@ impl Handle {
             return Err(pcap_util::convert_libpcap_error(self.handle));
         }
         Ok(self)
+    }
+
+    pub fn set_immediate_mode(&self) -> Result<&Self, Error> {
+        if 0 != unsafe { pcap_sys::pcap_set_immediate_mode(self.handle, 1) } {
+            Err(pcap_util::convert_libpcap_error(self.handle))
+        } else {
+            Ok(self)
+        }
     }
 
     pub fn activate(&self) -> Result<&Self, Error> {
