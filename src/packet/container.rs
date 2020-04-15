@@ -12,10 +12,7 @@ impl Container {
     }
 
     pub fn timestamp(&self) -> &std::time::SystemTime {
-        self.inner
-            .last()
-            .map(|p| p.timestamp())
-            .unwrap_or(&std::time::UNIX_EPOCH)
+        self.inner.last().map(|p| p.timestamp()).unwrap_or(&std::time::UNIX_EPOCH)
     }
 
     pub fn push(&mut self, packet: Packet) {

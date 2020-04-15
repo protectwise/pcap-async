@@ -373,7 +373,7 @@ mod tests {
         };
 
         let mut result = transformed.collect::<Vec<_>>().await;
-        println!("result {:?}", result);
+        info!("result {:?}", result);
         match result.first() {
             Some(Poll::Pending) => {},
             _ => panic!("Should be pending and not finished")

@@ -1,8 +1,6 @@
 use crate::packet::Packets;
 use crate::{Config, Error, Handle, Packet};
 
-use failure::_core::cmp::max;
-use failure::_core::ptr::slice_from_raw_parts;
 use log::*;
 use pin_project::pin_project;
 use std::future::Future;
@@ -11,6 +9,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::task;
+use failure::_core::cmp::max;
+use failure::_core::ptr::slice_from_raw_parts;
 
 extern "C" fn dispatch_callback(
     user: *mut u8,
@@ -145,9 +145,7 @@ impl Iterator for PacketIterator {
             self.snaplen,
         );
 
-        if let None = r {
-            self.is_complete = true;
-        }
+        self.is_complete = r.is_none();
 
         r
     }
