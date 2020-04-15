@@ -53,7 +53,7 @@ impl PacketIterator {
         }
     }
 }
-
+#[derive(Debug)]
 pub enum PacketIteratorItem {
     NoPackets,
     Err(Error),

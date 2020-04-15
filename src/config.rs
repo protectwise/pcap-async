@@ -102,7 +102,7 @@ impl Default for Config {
             snaplen: 65535,
             buffer_size: 16777216,
             bpf: None,
-            retry_after: std::time::Duration::from_millis(10),
+            retry_after: std::time::Duration::from_millis(100),
         }
     }
 }
