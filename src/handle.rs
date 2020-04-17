@@ -211,6 +211,17 @@ impl Handle {
         }
     }
 
+    pub fn fd(&self) -> Result<i32, Error> {
+        unsafe {
+            let fd = pcap_sys::pcap_get_selectable_fd(self.handle);
+            if fd == -1 {
+                Err(pcap_util::convert_libpcap_error(self.handle))
+            } else {
+                Ok(fd)
+            }
+        }
+    }
+
     pub fn as_mut_ptr(&self) -> *mut pcap_sys::pcap_t {
         self.handle
     }

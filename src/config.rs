@@ -6,7 +6,7 @@ pub struct Config {
     snaplen: u32,
     buffer_size: u32,
     bpf: Option<String>,
-    retry_after: std::time::Duration,
+    buffer_for: std::time::Duration,
 }
 
 impl Config {
@@ -46,12 +46,12 @@ impl Config {
         self
     }
 
-    pub fn retry_after(&self) -> &std::time::Duration {
-        &self.retry_after
+    pub fn buffer_for(&self) -> &std::time::Duration {
+        &self.buffer_for
     }
 
-    pub fn with_retry_after(&mut self, amt: std::time::Duration) -> &mut Self {
-        self.retry_after = amt;
+    pub fn with_buffer_for(&mut self, amt: std::time::Duration) -> &mut Self {
+        self.buffer_for = amt;
         self
     }
 
@@ -60,14 +60,14 @@ impl Config {
         snaplen: u32,
         buffer_size: u32,
         bpf: Option<String>,
-        retry_after: std::time::Duration,
+        buffer_for: std::time::Duration,
     ) -> Config {
         Config {
             max_packets_read,
             snaplen,
             buffer_size,
             bpf,
-            retry_after,
+            buffer_for,
         }
     }
 }
@@ -79,7 +79,7 @@ impl Default for Config {
             snaplen: 65535,
             buffer_size: 16777216,
             bpf: None,
-            retry_after: std::time::Duration::from_millis(10),
+            buffer_for: std::time::Duration::from_millis(100),
         }
     }
 }

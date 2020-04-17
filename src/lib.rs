@@ -32,7 +32,8 @@ mod stats;
 mod stream;
 
 pub use crate::{
-    bridge_stream::BridgeStream, config::Config, errors::Error, handle::Handle, info::Info,
+    bridge_stream::BridgeStream,
+    config::Config, errors::Error, handle::Handle, info::Info,
     packet::Packet, stats::Stats, stream::PacketStream, stream::StreamItem,
 };
 pub use byteorder::{BigEndian, LittleEndian, NativeEndian, WriteBytesExt};

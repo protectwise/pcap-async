@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::errors::Error;
 use crate::handle::Handle;
-use crate::packet::{Packet, PacketIterator, PacketIteratorItem};
+use crate::packet::{Packet, PacketFuture};
 use crate::pcap_util;
 
 use failure::Fail;
@@ -20,8 +20,8 @@ pub type StreamItem<E> = Result<Vec<Packet>, E>;
 #[pin_project]
 pub struct PacketStream {
     config: Config,
-    delaying: Option<Delay>,
-    inner: PacketIterator,
+    handle: Arc<Handle>,
+    pending: Option<PacketFuture>,
     complete: bool,
 }
 
@@ -45,12 +45,10 @@ impl PacketStream {
             }
         }
 
-        let inner = PacketIterator::new(&config, &handle);
-
         Ok(PacketStream {
             config: config,
-            inner: inner,
-            delaying: None,
+            handle: handle,
+            pending: None,
             complete: false,
         })
     }
@@ -66,27 +64,33 @@ impl Stream for PacketStream {
             return Poll::Ready(None);
         }
 
-        if let Some(mut existing_delay) = this.delaying.take() {
-            trace!("Checking delay");
-            if let Poll::Pending = Pin::new(&mut existing_delay).poll(cx) {
-                *this.delaying = Some(existing_delay);
-                return Poll::Pending;
+        let mut f = if let Some(f) = this.pending.take() {
+            f
+        } else {
+            match PacketFuture::new(this.config, this.handle) {
+                Err(e) => {
+                    *this.complete = true;
+                    return Poll::Ready(Some(Err(e)));
+                }
+                Ok(f) => f,
             }
-        }
+        };
 
-        match this.inner.next() {
-            None => {
+        match Pin::new(&mut f).poll(cx) {
+            Poll::Pending => {
+                *this.pending = Some(f);
+                Poll::Pending
+            }
+            Poll::Ready(None) => {
                 debug!("Stream was complete");
                 *this.complete = true;
                 Poll::Ready(None)
             },
-            Some(PacketIteratorItem::Err(e)) => Poll::Ready(Some(Err(e))),
-            Some(PacketIteratorItem::NoPackets) => {
-                trace!("No packets returned, and haven't delayed");
-                *this.delaying = Some(tokio::time::delay_for(*this.config.retry_after()));
-                Poll::Pending
-            }
-            Some(PacketIteratorItem::Packets(packets)) => {
+            Poll::Ready(Some(Err(e))) => {
+                *this.complete = true;
+                Poll::Ready(Some(Err(e)))
+            },
+            Poll::Ready(Some(Ok(packets))) => {
                 trace!("Returning {} packets", packets.len());
                 Poll::Ready(Some(Ok(packets)))
             }
@@ -124,7 +128,7 @@ mod tests {
             .flatten()
             .flatten()
             .filter(|p| {
-                p.data().len() == p.actual_length() as _
+                p.data().len() == p.actual_length() as usize
             })
             .collect();
 
@@ -200,6 +204,15 @@ mod tests {
             stream.is_ok(),
             format!("Could not build stream {}", stream.err().unwrap())
         );
+
+        let mut stream = stream.unwrap();
+
+        let mut rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            tokio::spawn(async move {
+                stream.next().await.unwrap().unwrap();
+            })
+        });
     }
 
     #[test]
