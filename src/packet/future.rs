@@ -125,20 +125,21 @@ async fn dispatch(
             }
             0 if args.live_capture => {
                 trace!("No packets in buffer");
-                let timeout = if packets.is_empty() {
-                    None
-                } else {
-                    Some(args.buffer_for - Instant::now().duration_since(started_at))
-                };
-                tokio::task::block_in_place(|| {
-                    args.poll(timeout)
-                })?;
                 if should_return_packets(packets.len()) {
                     debug!(
                         "Capture loop returning with {} packets",
                         args.max_packets_read
                     );
                     return Ok(DispatchResult { args: args, result: Some(packets.into_inner()) });
+                } else {
+                    let timeout = if packets.is_empty() {
+                        None
+                    } else {
+                        args.buffer_for.checked_sub(Instant::now().duration_since(started_at))
+                    };
+                    tokio::task::block_in_place(|| {
+                        args.poll(timeout)
+                    })?;
                 }
             }
             0 if !packets.is_empty() => {
