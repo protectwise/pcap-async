@@ -32,8 +32,7 @@ mod stats;
 mod stream;
 
 pub use crate::{
-    bridge_stream::BridgeStream,
-    config::Config, errors::Error, handle::Handle, info::Info,
+    bridge_stream::BridgeStream, config::Config, errors::Error, handle::Handle, info::Info,
     packet::Packet, stats::Stats, stream::PacketStream, stream::StreamItem,
 };
 pub use byteorder::{BigEndian, LittleEndian, NativeEndian, WriteBytesExt};
@@ -65,8 +64,8 @@ mod tests {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
-        let packet_provider =
-            PacketStream::new(Config::default(), std::sync::Arc::clone(&handle)).expect("Failed to build");
+        let packet_provider = PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
+            .expect("Failed to build");
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Result<Vec<_>, Error> = fut_packets.await.into_iter().collect();
         let packets = packets

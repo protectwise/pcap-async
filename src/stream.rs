@@ -85,11 +85,11 @@ impl Stream for PacketStream {
                 debug!("Stream was complete");
                 *this.complete = true;
                 Poll::Ready(None)
-            },
+            }
             Poll::Ready(Some(Err(e))) => {
                 *this.complete = true;
                 Poll::Ready(Some(Err(e)))
-            },
+            }
             Poll::Ready(Some(Ok(packets))) => {
                 trace!("Returning {} packets", packets.len());
                 Poll::Ready(Some(Ok(packets)))
@@ -127,9 +127,7 @@ mod tests {
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|p| {
-                p.data().len() == p.actual_length() as usize
-            })
+            .filter(|p| p.data().len() == p.actual_length() as usize)
             .collect();
 
         handle.interrupt();

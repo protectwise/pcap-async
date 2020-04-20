@@ -38,9 +38,7 @@ where
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
-    pub fn new(
-        streams: Vec<T>,
-    ) -> Result<BridgeStream<E, T>, Error> {
+    pub fn new(streams: Vec<T>) -> Result<BridgeStream<E, T>, Error> {
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for stream in streams {
             let new_state = BridgeStreamState {
@@ -179,9 +177,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider =
-            BridgeStream::new(vec![packet_stream])
-                .expect("Failed to build");
+        let packet_provider = BridgeStream::new(vec![packet_stream]).expect("Failed to build");
 
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Vec<_> = fut_packets
@@ -232,9 +228,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider =
-            BridgeStream::new(vec![packet_stream])
-                .expect("Failed to build");
+        let packet_provider = BridgeStream::new(vec![packet_stream]).expect("Failed to build");
 
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
@@ -265,8 +259,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream =
-            BridgeStream::new(vec![packet_stream]);
+        let stream = BridgeStream::new(vec![packet_stream]);
 
         assert!(
             stream.is_ok(),

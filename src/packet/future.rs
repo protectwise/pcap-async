@@ -1,5 +1,5 @@
-use crate::{Config, Error, Handle, Packet};
 use crate::packet::Packets;
+use crate::{Config, Error, Handle, Packet};
 
 use log::*;
 use pin_project::pin_project;
@@ -34,7 +34,7 @@ extern "C" fn dispatch_callback(
 
 enum PacketFutureState {
     Args(DispatchArgs),
-    Pending(Pin<Box<dyn Future<Output=Result<DispatchResult, Error>> + Send>>)
+    Pending(Pin<Box<dyn Future<Output = Result<DispatchResult, Error>> + Send>>),
 }
 
 struct DispatchArgs {
@@ -49,9 +49,15 @@ struct DispatchArgs {
 impl DispatchArgs {
     async fn poll(&self, timeout: Option<Duration>) -> Result<(), Error> {
         let ev = mio::unix::EventedFd(&self.fd);
-        let ev = tokio::io::PollEvented::new_with_ready(ev, mio::Ready::readable()).map_err(Error::Io)?;
+        let ready = mio::Ready::from_usize(
+            mio::Ready::readable().as_usize()
+                | mio::unix::UnixReady::error().as_usize()
+                | mio::unix::UnixReady::hup().as_usize(),
+        );
+        let ev = tokio::io::PollEvented::new_with_ready(ev, ready).map_err(Error::Io)?;
         let f = tokio::future::poll_fn(|cx| {
-            ev.poll_read_ready(cx, mio::Ready::readable()).map_err(Error::Io)
+            ev.poll_read_ready(cx, mio::Ready::readable())
+                .map_err(Error::Io)
         });
         if let Some(dur) = timeout {
             let _r = tokio::time::timeout(dur, f).await;
@@ -92,9 +98,7 @@ impl PacketFuture {
     }
 }
 
-async fn dispatch(
-    args: DispatchArgs
-) -> Result<DispatchResult, Error> {
+async fn dispatch(args: DispatchArgs) -> Result<DispatchResult, Error> {
     let started_at = Instant::now();
     let mut packets = Packets::new(args.max_packets_read, args.snaplen);
 
@@ -117,7 +121,10 @@ async fn dispatch(
         match ret_code {
             -2 => {
                 debug!("Pcap breakloop invoked");
-                return Ok(DispatchResult { args: args, result: None });
+                return Ok(DispatchResult {
+                    args: args,
+                    result: None,
+                });
             }
             -1 => {
                 let err = crate::pcap_util::convert_libpcap_error(args.pcap_handle.as_mut_ptr());
@@ -131,12 +138,16 @@ async fn dispatch(
                         "Capture loop returning with {} packets",
                         args.max_packets_read
                     );
-                    return Ok(DispatchResult { args: args, result: Some(packets.into_inner()) });
+                    return Ok(DispatchResult {
+                        args: args,
+                        result: Some(packets.into_inner()),
+                    });
                 } else {
                     let timeout = if packets.is_empty() {
                         None
                     } else {
-                        args.buffer_for.checked_sub(Instant::now().duration_since(started_at))
+                        args.buffer_for
+                            .checked_sub(Instant::now().duration_since(started_at))
                     };
                     args.poll(timeout).await?;
                 }
@@ -144,7 +155,10 @@ async fn dispatch(
             0 if !packets.is_empty() => {
                 debug!("Not live capture and no packets, calling breakloop");
                 unsafe { pcap_sys::pcap_breakloop(args.pcap_handle.as_mut_ptr()) }
-                return Ok(DispatchResult { args: args, result: Some(packets.into_inner()) });
+                return Ok(DispatchResult {
+                    args: args,
+                    result: Some(packets.into_inner()),
+                });
             }
             x if x > 0 => {
                 trace!("Capture loop captured {} packets", x);
@@ -153,7 +167,10 @@ async fn dispatch(
                         "Capture loop returning with {} packets",
                         args.max_packets_read
                     );
-                    return Ok(DispatchResult { args: args, result: Some(packets.into_inner()) });
+                    return Ok(DispatchResult {
+                        args: args,
+                        result: Some(packets.into_inner()),
+                    });
                 }
             }
             _ => {
@@ -167,9 +184,15 @@ async fn dispatch(
     debug!("Interrupt invoked");
 
     if packets.is_empty() {
-        return Ok(DispatchResult { args: args, result: None });
+        return Ok(DispatchResult {
+            args: args,
+            result: None,
+        });
     } else {
-        return Ok(DispatchResult { args: args, result: Some(packets.into_inner()) });
+        return Ok(DispatchResult {
+            args: args,
+            result: Some(packets.into_inner()),
+        });
     }
 }
 
