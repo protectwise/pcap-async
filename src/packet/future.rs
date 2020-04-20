@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::task;
-use mio::Evented;
 
 extern "C" fn dispatch_callback(
     user: *mut u8,
@@ -45,18 +44,21 @@ struct DispatchArgs {
     snaplen: u32,
     live_capture: bool,
     buffer_for: Duration,
-    poll: mio::Poll,
 }
 
 impl DispatchArgs {
-    fn poll(&self, timeout: Option<Duration>) -> Result<(), Error> {
+    async fn poll(&self, timeout: Option<Duration>) -> Result<(), Error> {
         let ev = mio::unix::EventedFd(&self.fd);
-        let ready = mio::Ready::readable();
-        let opts = mio::PollOpt::edge();
-        ev.register(&self.poll, mio::Token(0), ready, opts).map_err(Error::Io)?;
-        let mut events = mio::Events::with_capacity(1);
-        self.poll.poll(&mut events, timeout).map_err(Error::Io)?;
-        self.poll.deregister(&ev).map_err(Error::Io)
+        let ev = tokio::io::PollEvented::new_with_ready(ev, mio::Ready::readable()).map_err(Error::Io)?;
+        let f = tokio::future::poll_fn(|cx| {
+            ev.poll_read_ready(cx, mio::Ready::readable()).map_err(Error::Io)
+        });
+        if let Some(dur) = timeout {
+            let _r = tokio::time::timeout(dur, f).await;
+        } else {
+            f.await?;
+        }
+        Ok(())
     }
 }
 
@@ -81,7 +83,6 @@ impl PacketFuture {
             snaplen: config.snaplen(),
             live_capture: handle.is_live_capture(),
             buffer_for: config.buffer_for().clone(),
-            poll: mio::Poll::new().map_err(Error::Io)?,
         };
 
         Ok(Self {
@@ -137,9 +138,7 @@ async fn dispatch(
                     } else {
                         args.buffer_for.checked_sub(Instant::now().duration_since(started_at))
                     };
-                    tokio::task::block_in_place(|| {
-                        args.poll(timeout)
-                    })?;
+                    args.poll(timeout).await?;
                 }
             }
             0 if !packets.is_empty() => {
