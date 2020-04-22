@@ -25,7 +25,7 @@ where
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     stream: T,
-    current: Vec<Packet>,
+    current: VecDeque<Packet>,
     complete: bool,
 }
 
@@ -43,7 +43,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
         for stream in streams {
             let new_state = BridgeStreamState {
                 stream: stream,
-                current: Vec::new(),
+                current: VecDeque::new(),
                 complete: false,
             };
             stream_states.push_back(new_state);
@@ -62,7 +62,7 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
     loop {
         let mut current_lowest: Option<(usize, &SystemTime)> = None;
         for (i, stream) in stream_states.iter_mut().enumerate() {
-            let first = stream.current.first();
+            let first = stream.current.get(0);
             if let Some(first) = first {
                 current_lowest = current_lowest
                     .map(
@@ -79,7 +79,7 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
             let iter = stream_states
                 .get_mut(idx)
                 .into_iter()
-                .flat_map(|state| state.current.drain(0..1));
+                .flat_map(|state| state.current.pop_front().into_iter());
             to_sort.extend(iter);
         } else {
             return to_sort;
