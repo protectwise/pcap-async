@@ -25,7 +25,7 @@ where
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     stream: T,
-    current: VecDeque<Packet>,
+    current: Vec<Packet>,
     complete: bool,
 }
 
@@ -43,7 +43,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
         for stream in streams {
             let new_state = BridgeStreamState {
                 stream: stream,
-                current: VecDeque::new(),
+                current: vec![],
                 complete: false,
             };
             stream_states.push_back(new_state);
@@ -58,7 +58,16 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
 fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
 ) -> Vec<Packet> {
-    let mut to_sort = vec![];
+    let mut to_sort: Vec<Packet> = vec![];
+    for stream in stream_states.iter_mut() {
+        let current = std::mem::take(&mut stream.current);
+        to_sort.extend(current)
+    }
+
+    to_sort.sort_by_key(|p| p.timestamp().to_owned());
+    to_sort
+
+    /*
     loop {
         let mut current_lowest: Option<(usize, &SystemTime)> = None;
         for (i, stream) in stream_states.iter_mut().enumerate() {
@@ -84,7 +93,7 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
         } else {
             return to_sort;
         }
-    }
+    }*/
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream
