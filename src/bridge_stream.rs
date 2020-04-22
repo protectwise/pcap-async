@@ -85,7 +85,6 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
         } else {
             return to_sort;
         }
-
     }
 }
 
@@ -299,8 +298,8 @@ mod tests {
             packets2.push(p)
         }
 
-        let item1: StreamItem<Error> = Ok(packets1);
-        let item2: StreamItem<Error> = Ok(packets2);
+        let item1: StreamItem<Error> = Ok(packets1.clone());
+        let item2: StreamItem<Error> = Ok(packets2.clone());
 
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
@@ -311,61 +310,25 @@ mod tests {
             .expect("Unable to create BridgeStream")
             .collect::<Vec<StreamItem<Error>>>()
             .await;
+        let result = result.into_iter().map(|r| {
+            r.unwrap()
+        })
+            .flatten()
+            .collect::<Vec<Packet>>();
         info!("Result {:?}", result);
 
-        assert_eq!(result.len(), 2);
-        let batch1 = result
-            .first()
-            .expect("Expected value")
-            .as_ref()
-            .expect("Err not expected");
-        let batch2 = result
-            .last()
-            .expect("Expected value")
-            .as_ref()
-            .expect("Err not expected");
-        let (batch1_min, batch1_max) = (batch1.first(), batch1.last());
-        let (batch2_min, batch2_max) = (batch2.first(), batch2.last());
-        assert_eq!(
-            batch1_min
-                .unwrap()
-                .timestamp()
-                .duration_since(base_time)
-                .unwrap()
-                .as_secs(),
-            0
-        );
-        assert_eq!(
-            batch1_max
-                .unwrap()
-                .timestamp()
-                .duration_since(base_time)
-                .unwrap()
-                .as_secs(),
-            13
-        );
-        assert_eq!(
-            batch2_min
-                .unwrap()
-                .timestamp()
-                .duration_since(base_time)
-                .unwrap()
-                .as_secs(),
-            14
-        );
-        assert_eq!(
-            batch2_max
-                .unwrap()
-                .timestamp()
-                .duration_since(base_time)
-                .unwrap()
-                .as_secs(),
-            19
-        );
+        let mut expected = vec![packets1, packets2]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<Packet>>();
+        expected.sort_by_key(|p| p.timestamp().clone());
+        let expected_time = expected.iter().map(|p| p.timestamp()).collect::<Vec<_>>();
+        let result_time = result.iter().map(|p| p.timestamp()).collect::<Vec<_>>();
+        assert_eq!(result.len(), expected.len());
+        assert_eq!(result_time, expected_time);
 
-        let flat_result: Vec<Packet> = result.drain(..).flat_map(|r| r.unwrap()).collect();
-        assert_eq!(flat_result.len(), 30); //30 because 20 + 10 from the time rangess specified above
+        info!("result: {:?}", result);
+        info!("expected: {:?}", expected);
 
-        info!("Results: {:?}", result);
     }
 }
