@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::time::Delay;
+use std::cmp::Ordering;
 
 struct BridgeStreamState<E, T>
 where
@@ -24,7 +25,6 @@ where
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     stream: T,
-    existing: Vec<Packet>,
     current: Vec<Packet>,
     complete: bool,
 }
@@ -43,7 +43,6 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
         for stream in streams {
             let new_state = BridgeStreamState {
                 stream: stream,
-                existing: Vec::new(),
                 current: Vec::new(),
                 complete: false,
             };
@@ -58,35 +57,36 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
 
 fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
-    gather_to: Option<SystemTime>,
 ) -> Vec<Packet> {
+
     let mut to_sort = vec![];
-    for iface in stream_states.iter_mut() {
-        let v = std::mem::replace(&mut iface.existing, vec![]);
-        to_sort.extend(v);
-    }
-    trace!("Have {} existing packets", to_sort.len());
-    if let Some(ts) = gather_to {
-        for state in stream_states.iter_mut() {
-            let current = std::mem::replace(&mut state.current, vec![]);
-            let t: (Vec<_>, Vec<_>) = current.into_iter().partition(|p| *p.timestamp() < ts);
-            let (before_ts, after_ts) = t;
-            trace!(
-                "Adding {} packets based on timestamp, {} packets adding to existing",
-                before_ts.len(),
-                after_ts.len()
-            );
-            to_sort.extend(before_ts);
-            state.existing = after_ts;
+    loop {
+        let mut current_lowest:Option<(usize, &SystemTime)> = None;
+        for (i, stream) in stream_states.iter_mut().enumerate() {
+            let first = stream.current.first();
+            if let Some(first) = first {
+                current_lowest = current_lowest.map(|(current_idx, current_time)| {
+                    match first.timestamp().cmp(current_time) {
+                        Ordering::Less => (i, first.timestamp()),
+                        _ => (current_idx, current_time)
+                    }
+                }).or_else(|| {Some((i, first.timestamp()))});
+            }
         }
-    } else {
-        for iface in stream_states.iter_mut() {
-            trace!("Moving {} packets into existing", iface.current.len());
-            std::mem::swap(&mut iface.existing, &mut iface.current);
+
+        if let Some((idx, _)) = current_lowest {
+            let iter = stream_states
+                .get_mut(idx)
+                .into_iter()
+                .flat_map(|state| {
+                    state.current.drain(0..1)
+                });
+            to_sort.extend(iter);
+        } else {
+            return to_sort;
         }
+
     }
-    to_sort.sort_by_key(|p| *p.timestamp());
-    to_sort
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream
@@ -95,12 +95,10 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
     type Item = StreamItem<E>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        //return Poll::Pending;
         let this = self.project();
         trace!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
 
-        let mut gather_to: Option<SystemTime> = None;
         let mut delay_count = 0;
         for state in states.iter_mut() {
             match Pin::new(&mut state.stream).poll_next(cx) {
@@ -121,18 +119,13 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     if v.is_empty() {
                         continue;
                     }
-                    if let Some(p) = v.last() {
-                        gather_to = gather_to
-                            .map(|ts| std::cmp::min(ts, *p.timestamp()))
-                            .or(Some(*p.timestamp()));
-                    }
                     trace!("Adding {} packets to current", v.len());
                     state.current.extend(v);
                 }
             }
         }
 
-        let res = gather_packets(states, gather_to);
+        let res = gather_packets(states);
 
         states.retain(|iface| {
             //drop the complete interfaces
