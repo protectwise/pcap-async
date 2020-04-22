@@ -58,12 +58,18 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
 fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
 ) -> Vec<Packet> {
+    // let total_len: usize = stream_states
+    //     .iter()
+    //     .map(|s| s.current.len()).sum();
     let mut to_sort: Option<Vec<Packet>> = None;
     let mut largest: Option<(usize, usize)> = None;
     for (current_idx, stream) in stream_states.iter().enumerate() {
         largest = largest.map(|(idx, size)| {
-            match size.cmp(&stream.current.len()) {
-                Ordering::Greater => (current_idx, stream.current.len()),
+            match stream.current.len().cmp(&size) {
+                Ordering::Greater => {
+                    let len = stream.current.len();
+                    (current_idx, len)
+                },
                 _ => (idx, size)
             }
         }).or_else(|| Some((current_idx, stream.current.len())))
