@@ -94,7 +94,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
-        trace!("Interfaces: {:?}", this.stream_states.len());
+        //trace!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
 
         let mut delay_count = 0;
@@ -114,12 +114,12 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     continue;
                 }
                 Poll::Ready(Some(Ok(v))) => {
-                    trace!("Poll returns with {} packets", v.len());
+                    //trace!("Poll returns with {} packets", v.len());
                     if v.is_empty() {
                         delay_count = delay_count + 1;
                         continue;
                     }
-                    trace!("Adding {} packets to current", v.len());
+                    //trace!("Adding {} packets to current", v.len());
                     state.current.extend(v);
                 }
             }
