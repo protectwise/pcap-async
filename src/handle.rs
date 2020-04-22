@@ -1,9 +1,9 @@
 use crate::bpf::Bpf;
 use crate::{errors::Error, pcap_util, stats::Stats};
 use log::*;
+use pcap_sys::{pcap_fileno, pcap_set_immediate_mode};
 use std::os::raw::c_int;
 use std::path::Path;
-use pcap_sys::{pcap_fileno, pcap_set_immediate_mode};
 
 /// Wrapper around a pcap_t handle to indicate live or offline capture, and allow the handle to
 /// be interrupted to stop capture.
@@ -208,6 +208,17 @@ impl Handle {
             Err(pcap_util::convert_libpcap_error(self.handle))
         } else {
             Ok(self)
+        }
+    }
+
+    pub fn fd(&self) -> Result<i32, Error> {
+        unsafe {
+            let fd = pcap_sys::pcap_get_selectable_fd(self.handle);
+            if fd == -1 {
+                Err(pcap_util::convert_libpcap_error(self.handle))
+            } else {
+                Ok(fd)
+            }
         }
     }
 

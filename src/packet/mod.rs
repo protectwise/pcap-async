@@ -1,8 +1,8 @@
 mod container;
-mod iterator;
+mod future;
 
 pub use container::Container as Packets;
-pub use iterator::{PacketIteratorItem, PacketIterator};
+pub use future::PacketFuture;
 
 use crate::Error;
 

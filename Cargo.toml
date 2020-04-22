@@ -24,9 +24,10 @@ failure = "0.1"
 futures = "0.3"
 libc = "0.2"
 log = "0.4"
+mio = "0.6"
 pin-project = "0.4"
 pcap-sys = "0.1"
-tokio = { version = "0.2", features = ["blocking", "rt-threaded", "time"] }
+tokio = { version = "0.2", features = ["blocking", "io-driver", "rt-threaded", "time"] }
 
 [dev-dependencies]
 criterion = "0.2"
@@ -40,3 +41,6 @@ path = "src/lib.rs"
 path = "benches/bench_capture.rs"
 name = "bench_capture"
 harness = false
+
+[patch.crates-io]
+tokio = { git = "https://github.com/dbcfd/tokio.git", branch = "poll-evented-error-2413" }
