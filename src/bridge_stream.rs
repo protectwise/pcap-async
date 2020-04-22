@@ -58,14 +58,39 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
 fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
 ) -> Vec<Packet> {
-    let mut to_sort: Vec<Packet> = vec![];
-    for stream in stream_states.iter_mut() {
-        let current = std::mem::take(&mut stream.current);
-        to_sort.extend(current)
+    let mut to_sort: Option<Vec<Packet>> = None;
+    let mut largest: Option<(usize, usize)> = None;
+    for (current_idx, stream) in stream_states.iter().enumerate() {
+        largest = largest.map(|(idx, size)| {
+            match size.cmp(&stream.current.len()) {
+                Ordering::Greater => (current_idx, stream.current.len()),
+                _ => (idx, size)
+            }
+        }).or_else(|| Some((current_idx, stream.current.len())))
+    }
+    if let Some((largest_idx, _)) = largest {
+        to_sort = stream_states.get_mut(largest_idx).map(|s| {
+            std::mem::take(&mut s.current)
+        })
     }
 
-    to_sort.sort_by_key(|p| p.timestamp().to_owned());
-    to_sort
+    if let Some(mut to_sort) = to_sort.take() {
+        for stream in stream_states.iter_mut() {
+            to_sort.extend(std::mem::take(&mut stream.current));
+        }
+        to_sort.sort_by_key(|p| p.timestamp().to_owned());
+        to_sort
+    } else {
+        vec![]
+    }
+
+    // for stream in stream_states.iter_mut() {
+    //     let current = std::mem::take(&mut stream.current);
+    //     to_sort.extend(current)
+    // }
+    //
+    // to_sort.sort_by_key(|p| p.timestamp().to_owned());
+    // to_sort
 
     /*
     loop {
@@ -129,7 +154,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                         continue;
                     }
                     //trace!("Adding {} packets to current", v.len());
-                    state.current.extend(v);
+                    std::mem::replace(&mut state.current, v);
                 }
             }
         }
