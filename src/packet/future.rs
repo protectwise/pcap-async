@@ -59,11 +59,13 @@ impl DispatchArgs {
             ev.poll_read_ready(cx, mio::Ready::readable())
                 .map_err(Error::Io)
         });
-        if let Some(dur) = timeout {
-            let _r = tokio::time::timeout(dur, f).await;
-        } else {
-            f.await?;
-        }
+        f.await?;
+        // if let Some(dur) = timeout {
+        //
+        //     let _r = tokio::time::timeout(dur, f).await;
+        // } else {
+        //     f.await?;
+        // }
         Ok(())
     }
 }
