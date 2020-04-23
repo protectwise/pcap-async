@@ -141,7 +141,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
         for state in states.iter_mut() {
             match Pin::new(&mut state.stream).poll_next(cx) {
                 Poll::Pending => {
-                    trace!("Pending");
+                    trace!("Return Pending");
                     delay_count = delay_count + 1;
                     return Poll::Pending;
                 }
