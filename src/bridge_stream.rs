@@ -143,7 +143,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                 Poll::Pending => {
                     trace!("Return Pending");
                     delay_count = delay_count + 1;
-                    return Poll::Pending;
+                    continue;
                 }
                 Poll::Ready(Some(Err(e))) => {
                     return Poll::Ready(Some(Err(e)));
