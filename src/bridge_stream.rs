@@ -142,7 +142,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             match Pin::new(&mut state.stream).poll_next(cx) {
                 Poll::Pending => {
                     trace!("Pending");
-                    //delay_count = delay_count + 1;
+                    delay_count = delay_count + 1;
                     continue;
                 }
                 Poll::Ready(Some(Err(e))) => {
@@ -156,7 +156,8 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                 Poll::Ready(Some(Ok(v))) => {
                     //trace!("Poll returns with {} packets", v.len());
                     if v.is_empty() {
-                        //delay_count = delay_count + 1;
+                        trace!("Poll returns with no packets");
+                        delay_count = delay_count + 1;
                         continue;
                     }
                     //trace!("Adding {} packets to current", v.len());
