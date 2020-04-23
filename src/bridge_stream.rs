@@ -161,13 +161,12 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                         continue;
                     }
                     //trace!("Adding {} packets to current", v.len());
-                    //std::mem::replace(&mut state.current, v);
+                    std::mem::replace(&mut state.current, v);
                 }
             }
         }
 
-        //let res = gather_packets(states);
-        let res = vec![];
+        let res = gather_packets(states);
 
         states.retain(|iface| {
             //drop the complete interfaces
