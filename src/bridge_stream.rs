@@ -154,7 +154,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     continue;
                 }
                 Poll::Ready(Some(Ok(v))) => {
-                    //trace!("Poll returns with {} packets", v.len());
+                    trace!("Poll returns with {} packets", v.len());
                     if v.is_empty() {
                         trace!("Poll returns with no packets");
                         delay_count = delay_count + 1;
