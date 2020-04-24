@@ -123,6 +123,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             }
             gather_packets(states)
         } else {
+            trace!("Not reporting")
             vec![]
         };
 
