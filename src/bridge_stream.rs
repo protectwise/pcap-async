@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::time::Delay;
+use std::collections::BTreeMap;
 
 struct BridgeStreamState<E, T>
 where
@@ -27,7 +28,6 @@ where
     stream: T,
     current: Vec<Vec<Packet>>,
     complete: bool,
-    reported: bool,
 }
 
 #[pin_project]
@@ -46,7 +46,6 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
                 stream: stream,
                 current: vec![],
                 complete: false,
-                reported: false,
             };
             stream_states.push_back(new_state);
         }
@@ -61,10 +60,35 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
 ) -> Vec<Packet> {
     let mut result = vec![];
-    for s in stream_states.iter_mut() {
-        result.extend(std::mem::take(&mut s.current).drain(..).flatten());
+    let mut gather_to: Option<SystemTime> = None;
+
+    for s in stream_states.iter() {
+        let last_time = s
+            .current
+            .last()
+            .iter()
+            .flat_map(|p| p.last())
+            .last().map(|p| *p.timestamp());
+
+        if let Some(last_time) = last_time {
+            gather_to = gather_to.map(|prev|{
+                prev.min(last_time)
+            }).or(Some(last_time));
+        }
     }
-    result.sort_by_key(|p| *p.timestamp());
+
+    if let Some(gather_to) = gather_to {
+        for s in stream_states.iter_mut() {
+            let current = std::mem::take(&mut s.current);
+            let (to_send, to_keep) = current
+                .into_iter()
+                .flat_map(|ps| ps.into_iter())
+                .partition(|p| p.timestamp() <= &gather_to);
+            s.current = vec![to_keep];
+            result.extend(to_send)
+        }
+        result.sort_by_key(|p| *p.timestamp());
+    }
     result
 
 }
@@ -96,7 +120,6 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     continue;
                 }
                 Poll::Ready(Some(Ok(v))) => {
-                    state.reported = true;
                     trace!("Poll returns with {} packets", v.len());
                     if v.is_empty() {
                         trace!("Poll returns with no packets");
@@ -109,18 +132,15 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                 }
             }
         }
-        let mut reported_count = states.iter().map(|s| {
-            if s.reported {
-                1
-            } else {
-                0
-            }
-        }).sum::<usize>();
+        let reported_count = states.iter().filter(|s| {
+            s.current.len() >= 2
+        }).count();
 
-        let res = if reported_count == states.len() {
-            for s in states.iter_mut() {
-                s.reported = false;
-            }
+        let completed_count = states.iter().filter(|s| {
+            s.complete
+        }).count();
+
+        let res = if reported_count == states.len() || completed_count == states.len() {
             gather_packets(states)
         } else {
             trace!("Not reporting");
