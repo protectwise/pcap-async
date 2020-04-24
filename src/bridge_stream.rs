@@ -20,6 +20,7 @@ use std::time::SystemTime;
 use tokio::time::Delay;
 use std::collections::BTreeMap;
 use std::thread::current;
+use failure::_core::iter::Peekable;
 
 struct BridgeStreamState<E, T>
 where
@@ -63,6 +64,51 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
     }
 }
 
+fn sort_packets<I: Iterator<Item = Packet>>(mut to_sort: Vec<Peekable<I>>, size: usize) -> Vec<Packet> {
+    //let cap: usize = to_sort.iter().map(|it| it.count()).sum();
+    let mut to_return: Vec<Packet> = Vec::with_capacity(size);
+    loop {
+        let mut current_lowest: Option<(usize, SystemTime)> = None;
+        for (idx, it) in to_sort.iter_mut().enumerate() {
+            let curr_packet = it.peek();
+            if let Some(curr_packet) = curr_packet {
+                let curr_ts = *curr_packet.timestamp();
+                current_lowest = current_lowest.map(|(prev_idx, prev)| {
+                    match curr_ts.cmp(&prev) {
+                        Ordering::Less => {
+                            (idx, curr_ts)
+                        },
+                        _ => {
+                            (prev_idx, prev)
+                        }
+                    }
+                }).or_else(|| Some((idx, curr_ts)));
+            }
+        }
+
+        if let Some((idx, _)) = current_lowest {
+            let packet_opt = to_sort
+                .get_mut(idx)
+                .iter_mut()
+                .flat_map(|it| {
+                    let is_empty = it.is_empty();
+                    let it = it.next();
+                    it.map(|p| (p, is_empty))
+                })
+                .next();
+            if let Some((packet, is_empty)) = packet_opt {
+                to_return.push(packet);
+                to_sort.remove(idx);
+
+            }
+        } else {
+            break;
+        }
+    }
+
+    to_return
+}
+
 fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
 ) -> Vec<Packet> {
@@ -103,7 +149,6 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
     }
     result.sort_by_key(|p| *p.timestamp()); // todo convert
     result
-
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream
@@ -184,6 +229,65 @@ mod tests {
     use futures::{Future, Stream};
     use std::io::Cursor;
     use std::path::PathBuf;
+    use rand;
+    use std::ops::Range;
+    use failure::_core::time::Duration;
+
+    fn make_packet(ts: usize) -> Packet {
+        Packet {
+            timestamp: SystemTime::UNIX_EPOCH + Duration::from_millis(ts as _),
+            actual_length: 0,
+            original_length: 0,
+            data: vec![]
+        }
+    }
+
+    #[test]
+    fn sort_correctly() {
+        let max = 5000;
+        let to_sort1: Vec<Packet>  = {
+            let mut r = (0..max)
+                .map(|_| rand::random())
+                .collect::<Vec<usize>>();
+            r.sort();
+            r.into_iter().map(|i|{make_packet(i as _)})
+                .collect::<Vec<Packet>>()
+        };
+        let to_sort2: Vec<Packet>  = {
+            let mut r = (0..max)
+                .map(|_| rand::random())
+                .collect::<Vec<usize>>();
+            r.sort();
+            r.into_iter().map(|i|{make_packet(i as _)})
+                .collect::<Vec<Packet>>()
+        };
+        let to_sort3: Vec<Packet>  = {
+            let mut r = (0..max)
+                .map(|_| rand::random())
+                .collect::<Vec<usize>>();
+            r.sort();
+            r.into_iter().map(|i|{make_packet(i as _)})
+                .collect::<Vec<Packet>>()
+        };
+
+        let start_ts = SystemTime::now();
+        let mut acc = vec![to_sort1.clone(), to_sort2.clone(), to_sort3.clone()].into_iter().flatten().collect::<Vec<Packet>>();
+        acc.sort_by_key(|p| p.timestamp);
+        let taken = start_ts.elapsed().unwrap();
+        println!("Normal sort time: {:?}", taken);
+
+        let len = to_sort1.len() + to_sort2.len() + to_sort1.len();
+        let to_sort = vec![to_sort1.into_iter().peekable(), to_sort2.into_iter().peekable(), to_sort3.into_iter().peekable()];
+        let start_ts = SystemTime::now();
+        let sorted = sort_packets(to_sort, len);
+        let taken = start_ts.elapsed().unwrap();
+        println!("PAcket sort time: {:?}", taken);
+        let sorted = sorted.into_iter().map(|p| p.timestamp).collect::<Vec<_>>();
+        let acc = acc.into_iter().map(|p| p.timestamp).collect::<Vec<_>>();
+        assert_eq!(sorted, acc);
+
+
+    }
 
     #[tokio::test]
     async fn packets_from_file() {
