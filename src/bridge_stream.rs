@@ -19,6 +19,7 @@ use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::time::Delay;
 use std::collections::BTreeMap;
+use std::thread::current;
 
 struct BridgeStreamState<E, T>
 where
@@ -28,6 +29,12 @@ where
     stream: T,
     current: Vec<Vec<Packet>>,
     complete: bool,
+}
+
+impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStreamState<E,T> {
+    fn is_complete(&self) -> bool {
+        self.complete && self.current.is_empty()
+    }
 }
 
 #[pin_project]
@@ -84,11 +91,17 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
                 .into_iter()
                 .flat_map(|ps| ps.into_iter())
                 .partition(|p| p.timestamp() <= &gather_to);
-            s.current = vec![to_keep];
+
+            let to_keep: Vec<Packet>= to_keep;
+            if !to_keep.is_empty() {
+                s.current.push(to_keep);
+            }
             result.extend(to_send)
         }
-        result.sort_by_key(|p| *p.timestamp());
+    } else {
+
     }
+    result.sort_by_key(|p| *p.timestamp()); // todo convert
     result
 
 }
@@ -127,8 +140,6 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                         continue;
                     }
                     state.current.push(v);
-                    //trace!("Adding {} packets to current", v.len());
-                    //std::mem::replace(&mut state.current, v);
                 }
             }
         }
@@ -149,7 +160,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
         states.retain(|iface| {
             //drop the complete interfaces
-            return !iface.complete;
+            return !iface.is_complete();
         });
 
         if res.is_empty() && states.is_empty() {
