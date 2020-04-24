@@ -25,7 +25,7 @@ where
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     stream: T,
-    current: Vec<Packet>,
+    current: Vec<Vec<Packet>>,
     complete: bool,
     reported: bool,
 }
@@ -60,73 +60,13 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
 fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
 ) -> Vec<Packet> {
-    // let total_len: usize = stream_states
-    //     .iter()
-    //     .map(|s| s.current.len()).sum();
-    let mut to_sort: Option<Vec<Packet>> = None;
-    let mut largest: Option<(usize, usize)> = None;
-    for (current_idx, stream) in stream_states.iter().enumerate() {
-        largest = largest.map(|(idx, size)| {
-            match stream.current.len().cmp(&size) {
-                Ordering::Greater => {
-                    let len = stream.current.len();
-                    (current_idx, len)
-                },
-                _ => (idx, size)
-            }
-        }).or_else(|| Some((current_idx, stream.current.len())))
+    let mut result = vec![];
+    for s in stream_states.iter_mut() {
+        result.extend(std::mem::take(&mut s.current).drain(..).flatten());
     }
-    if let Some((largest_idx, _)) = largest {
-        to_sort = stream_states.get_mut(largest_idx).map(|s| {
-            std::mem::take(&mut s.current)
-        })
-    }
+    result.sort_by_key(|p| *p.timestamp());
+    result
 
-    if let Some(mut to_sort) = to_sort.take() {
-        for stream in stream_states.iter_mut() {
-            to_sort.extend(std::mem::take(&mut stream.current));
-        }
-        to_sort.sort_by_key(|p| p.timestamp().to_owned());
-        to_sort
-    } else {
-        vec![]
-    }
-
-    // for stream in stream_states.iter_mut() {
-    //     let current = std::mem::take(&mut stream.current);
-    //     to_sort.extend(current)
-    // }
-    //
-    // to_sort.sort_by_key(|p| p.timestamp().to_owned());
-    // to_sort
-
-    /*
-    loop {
-        let mut current_lowest: Option<(usize, &SystemTime)> = None;
-        for (i, stream) in stream_states.iter_mut().enumerate() {
-            let first = stream.current.get(0);
-            if let Some(first) = first {
-                current_lowest = current_lowest
-                    .map(
-                        |(current_idx, current_time)| match first.timestamp().cmp(current_time) {
-                            Ordering::Less => (i, first.timestamp()),
-                            _ => (current_idx, current_time),
-                        },
-                    )
-                    .or_else(|| Some((i, first.timestamp())));
-            }
-        }
-
-        if let Some((idx, _)) = current_lowest {
-            let iter = stream_states
-                .get_mut(idx)
-                .into_iter()
-                .flat_map(|state| state.current.pop_front().into_iter());
-            to_sort.extend(iter);
-        } else {
-            return to_sort;
-        }
-    }*/
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream
@@ -163,8 +103,9 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                         delay_count = delay_count + 1;
                         continue;
                     }
+                    state.current.push(v);
                     //trace!("Adding {} packets to current", v.len());
-                    std::mem::replace(&mut state.current, v);
+                    //std::mem::replace(&mut state.current, v);
                 }
             }
         }
