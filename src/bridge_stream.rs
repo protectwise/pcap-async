@@ -27,6 +27,7 @@ where
     stream: T,
     current: Vec<Packet>,
     complete: bool,
+    reported: bool,
 }
 
 #[pin_project]
@@ -45,6 +46,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
                 stream: stream,
                 current: vec![],
                 complete: false,
+                reported: false,
             };
             stream_states.push_back(new_state);
         }
@@ -154,6 +156,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     continue;
                 }
                 Poll::Ready(Some(Ok(v))) => {
+                    state.reported = true;
                     trace!("Poll returns with {} packets", v.len());
                     if v.is_empty() {
                         trace!("Poll returns with no packets");
@@ -165,8 +168,22 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                 }
             }
         }
+        let mut reported_count = states.iter().map(|s| {
+            if s.reported {
+                1
+            } else {
+                0
+            }
+        }).sum::<usize>();
 
-        let res = gather_packets(states);
+        let res = if reported_count == states.len() {
+            for s in states.iter_mut() {
+                s.reported = false;
+            }
+            gather_packets(states)
+        } else {
+            vec![]
+        };
 
         states.retain(|iface| {
             //drop the complete interfaces
