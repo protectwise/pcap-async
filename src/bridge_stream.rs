@@ -69,37 +69,43 @@ fn sort_packets<I: Iterator<Item = Packet>>(mut to_sort: Vec<Peekable<I>>, size:
     let mut to_return: Vec<Packet> = Vec::with_capacity(size);
     loop {
         let mut current_lowest: Option<(usize, SystemTime)> = None;
-        for (idx, it) in to_sort.iter_mut().enumerate() {
-            let curr_packet = it.peek();
-            if let Some(curr_packet) = curr_packet {
-                let curr_ts = *curr_packet.timestamp();
-                current_lowest = current_lowest.map(|(prev_idx, prev)| {
-                    match curr_ts.cmp(&prev) {
-                        Ordering::Less => {
-                            (idx, curr_ts)
-                        },
-                        _ => {
-                            (prev_idx, prev)
+        if to_sort.len() == 1 {
+            to_return.extend(to_sort.remove(0));
+        } else {
+            for (idx, it) in to_sort.iter_mut().enumerate() {
+                let curr_packet = it.peek();
+                if let Some(curr_packet) = curr_packet {
+                    let curr_ts = *curr_packet.timestamp();
+                    current_lowest = current_lowest.map(|(prev_idx, prev)| {
+                        match curr_ts.cmp(&prev) {
+                            Ordering::Less => {
+                                (idx, curr_ts)
+                            },
+                            _ => {
+                                (prev_idx, prev)
+                            }
                         }
-                    }
-                }).or_else(|| Some((idx, curr_ts)));
+                    }).or_else(|| Some((idx, curr_ts)));
+                }
             }
         }
+
+        to_sort = to_sort.into_iter().filter_map(|mut p| {
+            if p.peek().is_some() {
+                Some(p)
+            } else {
+                None
+            }
+        }).collect();
 
         if let Some((idx, _)) = current_lowest {
             let packet_opt = to_sort
                 .get_mut(idx)
                 .iter_mut()
-                .flat_map(|it| {
-                    let is_empty = it.is_empty();
-                    let it = it.next();
-                    it.map(|p| (p, is_empty))
-                })
+                .flat_map(|it| it.next())
                 .next();
-            if let Some((packet, is_empty)) = packet_opt {
-                to_return.push(packet);
-                to_sort.remove(idx);
-
+            if let Some(packet) = packet_opt {
+                to_return.push(packet)
             }
         } else {
             break;
