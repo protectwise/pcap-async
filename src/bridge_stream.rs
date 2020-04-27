@@ -1,17 +1,4 @@
-use crate::config::Config;
-use crate::errors::Error;
-use crate::handle::Handle;
-use crate::packet::Packet;
-use crate::pcap_util;
-
-use crate::stream::StreamItem;
-use failure::Fail;
-use futures::future::Pending;
-use futures::stream::{Stream, StreamExt};
-use log::*;
-use pin_project::pin_project;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
@@ -19,7 +6,21 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::thread::current;
 use std::time::{Duration, SystemTime};
+
+use failure::Fail;
+use futures::future::Pending;
+use futures::stream::{Stream, StreamExt};
+use log::*;
 use tokio::time::Delay;
+
+use pin_project::pin_project;
+
+use crate::config::Config;
+use crate::errors::Error;
+use crate::handle::Handle;
+use crate::packet::Packet;
+use crate::pcap_util;
+use crate::stream::StreamItem;
 
 struct BridgeStreamState<E, T>
 where
@@ -193,15 +194,18 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::PacketStream;
-    use byteorder::{ByteOrder, ReadBytesExt};
-    use futures::stream;
-    use futures::{Future, Stream};
-    use rand;
     use std::io::Cursor;
     use std::ops::Range;
     use std::path::PathBuf;
+
+    use byteorder::{ByteOrder, ReadBytesExt};
+    use futures::{Future, Stream};
+    use futures::stream;
+    use rand;
+
+    use crate::PacketStream;
+
+    use super::*;
 
     fn make_packet(ts: usize) -> Packet {
         Packet {
