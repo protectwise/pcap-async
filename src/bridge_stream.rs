@@ -1,23 +1,26 @@
-use crate::config::Config;
-use crate::errors::Error;
-use crate::handle::Handle;
-use crate::packet::Packet;
-use crate::pcap_util;
-
-use crate::stream::StreamItem;
-use failure::Fail;
-use futures::future::Pending;
-use futures::stream::{Stream, StreamExt};
-use log::*;
-use pin_project::pin_project;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::SystemTime;
+use std::thread::current;
+use std::time::{Duration, SystemTime};
+
+use failure::Fail;
+use futures::future::Pending;
+use futures::stream::{Stream, StreamExt};
+use log::*;
 use tokio::time::Delay;
+
+use pin_project::pin_project;
+
+use crate::config::Config;
+use crate::errors::Error;
+use crate::handle::Handle;
+use crate::packet::Packet;
+use crate::pcap_util;
+use crate::stream::StreamItem;
 
 struct BridgeStreamState<E, T>
 where
@@ -25,8 +28,27 @@ where
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     stream: T,
-    current: Vec<Packet>,
+    current: Vec<Vec<Packet>>,
     complete: bool,
+}
+
+impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>
+    BridgeStreamState<E, T>
+{
+    fn is_complete(&self) -> bool {
+        self.complete && self.current.is_empty()
+    }
+
+    fn spread(&self) -> Duration {
+        let min = self.current.first().map(|s| s.first()).flatten();
+
+        let max = self.current.last().map(|s| s.last()).flatten();
+
+        match (min, max) {
+            (Some(min), Some(max)) => max.timestamp().duration_since(*min.timestamp()).unwrap(),
+            _ => Duration::from_millis(0),
+        }
+    }
 }
 
 #[pin_project]
@@ -35,15 +57,16 @@ where
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     stream_states: VecDeque<BridgeStreamState<E, T>>,
+    max_buffer_time: Duration,
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
-    pub fn new(streams: Vec<T>) -> Result<BridgeStream<E, T>, Error> {
+    pub fn new(streams: Vec<T>, max_buffer_time: Duration) -> Result<BridgeStream<E, T>, Error> {
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for stream in streams {
             let new_state = BridgeStreamState {
                 stream: stream,
-                current: Vec::new(),
+                current: vec![],
                 complete: false,
             };
             stream_states.push_back(new_state);
@@ -51,6 +74,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
 
         Ok(BridgeStream {
             stream_states: stream_states,
+            max_buffer_time,
         })
     }
 }
@@ -58,33 +82,43 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
 fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
 ) -> Vec<Packet> {
-    let mut to_sort = vec![];
-    loop {
-        let mut current_lowest: Option<(usize, &SystemTime)> = None;
-        for (i, stream) in stream_states.iter_mut().enumerate() {
-            let first = stream.current.first();
-            if let Some(first) = first {
-                current_lowest = current_lowest
-                    .map(
-                        |(current_idx, current_time)| match first.timestamp().cmp(current_time) {
-                            Ordering::Less => (i, first.timestamp()),
-                            _ => (current_idx, current_time),
-                        },
-                    )
-                    .or_else(|| Some((i, first.timestamp())));
-            }
-        }
+    let mut result = vec![];
+    let mut gather_to: Option<SystemTime> = None;
 
-        if let Some((idx, _)) = current_lowest {
-            let iter = stream_states
-                .get_mut(idx)
-                .into_iter()
-                .flat_map(|state| state.current.drain(0..1));
-            to_sort.extend(iter);
-        } else {
-            return to_sort;
+    for s in stream_states.iter() {
+        let last_time = s
+            .current
+            .last()
+            .iter()
+            .flat_map(|p| p.last())
+            .last()
+            .map(|p| *p.timestamp());
+
+        if let Some(last_time) = last_time {
+            gather_to = gather_to
+                .map(|prev| prev.min(last_time))
+                .or(Some(last_time));
         }
     }
+
+    if let Some(gather_to) = gather_to {
+        for s in stream_states.iter_mut() {
+            let current = std::mem::take(&mut s.current);
+            let (to_send, to_keep) = current
+                .into_iter()
+                .flat_map(|ps| ps.into_iter())
+                .partition(|p| p.timestamp() <= &gather_to);
+
+            let to_keep: Vec<Packet> = to_keep;
+            if !to_keep.is_empty() {
+                s.current.push(to_keep);
+            }
+            result.extend(to_send)
+        }
+    } else {
+    }
+    result.sort_by_key(|p| *p.timestamp()); // todo convert
+    result
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream
@@ -94,14 +128,16 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
-        trace!("Interfaces: {:?}", this.stream_states.len());
+        //trace!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
-
+        let max_buffer_time = this.max_buffer_time;
+        let mut max_time_spread: Duration = Duration::from_millis(0);
         let mut delay_count = 0;
         for state in states.iter_mut() {
+            max_time_spread = state.spread().max(max_time_spread);
             match Pin::new(&mut state.stream).poll_next(cx) {
                 Poll::Pending => {
-                    trace!("Pending");
+                    trace!("Return Pending");
                     delay_count = delay_count + 1;
                     continue;
                 }
@@ -114,20 +150,34 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                     continue;
                 }
                 Poll::Ready(Some(Ok(v))) => {
+                    trace!("Poll returns with {} packets", v.len());
                     if v.is_empty() {
+                        trace!("Poll returns with no packets");
+                        delay_count = delay_count + 1;
                         continue;
                     }
-                    trace!("Adding {} packets to current", v.len());
-                    state.current.extend(v);
+                    state.current.push(v);
                 }
             }
         }
 
-        let res = gather_packets(states);
+        let one_buffer_is_over = max_time_spread > *max_buffer_time;
+
+        let ready_count = states
+            .iter()
+            .filter(|s| s.current.len() >= 2 || s.complete)
+            .count();
+
+        let res = if ready_count == states.len() || one_buffer_is_over {
+            gather_packets(states)
+        } else {
+            trace!("Not reporting");
+            vec![]
+        };
 
         states.retain(|iface| {
             //drop the complete interfaces
-            return !iface.complete;
+            return !iface.is_complete();
         });
 
         if res.is_empty() && states.is_empty() {
@@ -144,13 +194,27 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::PacketStream;
-    use byteorder::{ByteOrder, ReadBytesExt};
-    use futures::stream;
-    use futures::{Future, Stream};
     use std::io::Cursor;
+    use std::ops::Range;
     use std::path::PathBuf;
+
+    use byteorder::{ByteOrder, ReadBytesExt};
+    use futures::{Future, Stream};
+    use futures::stream;
+    use rand;
+
+    use crate::PacketStream;
+
+    use super::*;
+
+    fn make_packet(ts: usize) -> Packet {
+        Packet {
+            timestamp: SystemTime::UNIX_EPOCH + Duration::from_millis(ts as _),
+            actual_length: 0,
+            original_length: 0,
+            data: vec![],
+        }
+    }
 
     #[tokio::test]
     async fn packets_from_file() {
@@ -168,7 +232,8 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider = BridgeStream::new(vec![packet_stream]).expect("Failed to build");
+        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100))
+            .expect("Failed to build");
 
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Vec<_> = fut_packets
@@ -219,7 +284,8 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider = BridgeStream::new(vec![packet_stream]).expect("Failed to build");
+        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100))
+            .expect("Failed to build");
 
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
@@ -250,7 +316,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(vec![packet_stream]);
+        let stream = BridgeStream::new(vec![packet_stream], Duration::from_millis(100));
 
         assert!(
             stream.is_ok(),
@@ -271,7 +337,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(vec![packet_stream]);
+        let stream = BridgeStream::new(vec![packet_stream], Duration::from_millis(100));
 
         assert!(
             stream.is_ok(),
@@ -303,7 +369,7 @@ mod tests {
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
 
-        let bridge = BridgeStream::new(vec![stream1, stream2]);
+        let bridge = BridgeStream::new(vec![stream1, stream2], Duration::from_millis(100));
 
         let mut result = bridge
             .expect("Unable to create BridgeStream")

@@ -36,7 +36,6 @@ impl PacketStream {
                 .set_promiscuous()?
                 .set_timeout(&std::time::Duration::from_secs(0))?
                 .set_buffer_size(config.buffer_size())?
-                .set_immediate_mode()?
                 .activate()?;
 
             if let Some(bpf) = config.bpf() {

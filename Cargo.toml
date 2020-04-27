@@ -6,7 +6,7 @@ edition = "2018"
 # - Update CHANGELOG.md.
 # - Update doc URL.
 # - Create "v0.1.x" git tag.
-version = "0.1.10"
+version = "0.1.11"
 license = "MIT"
 readme = "README.md"
 description = """
@@ -30,6 +30,7 @@ pcap-sys = "0.1"
 tokio = { version = "0.2", features = ["blocking", "io-driver", "rt-threaded", "time"] }
 
 [dev-dependencies]
+rand = "0.3"
 criterion = "0.2"
 env_logger = "0.6"
 tokio = { version = "0.2", features = ["macros", "rt-core"] }
