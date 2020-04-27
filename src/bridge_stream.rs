@@ -6,21 +6,21 @@ use crate::pcap_util;
 
 use crate::stream::StreamItem;
 use failure::Fail;
+use failure::_core::iter::Peekable;
 use futures::future::Pending;
 use futures::stream::{Stream, StreamExt};
 use log::*;
 use pin_project::pin_project;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::{SystemTime, Duration};
-use tokio::time::Delay;
-use std::collections::BTreeMap;
 use std::thread::current;
-use failure::_core::iter::Peekable;
+use std::time::{Duration, SystemTime};
+use tokio::time::Delay;
 
 struct BridgeStreamState<E, T>
 where
@@ -32,25 +32,21 @@ where
     complete: bool,
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStreamState<E,T> {
+impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>
+    BridgeStreamState<E, T>
+{
     fn is_complete(&self) -> bool {
         self.complete && self.current.is_empty()
     }
 
     fn spread(&self) -> Duration {
-        let min = self
-            .current
-            .first().map(|s| s.first()).flatten();
+        let min = self.current.first().map(|s| s.first()).flatten();
 
-        let max = self
-            .current
-            .first().map(|s| s.first()).flatten();
+        let max = self.current.first().map(|s| s.first()).flatten();
 
         match (min, max) {
-            (Some(min), Some(max)) => {
-                max.timestamp().duration_since(*min.timestamp()).unwrap()
-            },
-            _ => Duration::from_millis(0)
+            (Some(min), Some(max)) => max.timestamp().duration_since(*min.timestamp()).unwrap(),
+            _ => Duration::from_millis(0),
         }
     }
 }
@@ -78,7 +74,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
 
         Ok(BridgeStream {
             stream_states: stream_states,
-            max_buffer_time
+            max_buffer_time,
         })
     }
 }
@@ -146,12 +142,13 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
             .last()
             .iter()
             .flat_map(|p| p.last())
-            .last().map(|p| *p.timestamp());
+            .last()
+            .map(|p| *p.timestamp());
 
         if let Some(last_time) = last_time {
-            gather_to = gather_to.map(|prev|{
-                prev.min(last_time)
-            }).or(Some(last_time));
+            gather_to = gather_to
+                .map(|prev| prev.min(last_time))
+                .or(Some(last_time));
         }
     }
 
@@ -163,14 +160,13 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
                 .flat_map(|ps| ps.into_iter())
                 .partition(|p| p.timestamp() <= &gather_to);
 
-            let to_keep: Vec<Packet>= to_keep;
+            let to_keep: Vec<Packet> = to_keep;
             if !to_keep.is_empty() {
                 s.current.push(to_keep);
             }
             result.extend(to_send)
         }
     } else {
-
     }
     result.sort_by_key(|p| *p.timestamp()); // todo convert
     result
@@ -218,9 +214,10 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
         let one_buffer_is_over = max_time_spread > *max_buffer_time;
 
-        let ready_count = states.iter().filter(|s| {
-            s.current.len() >= 2 ||  s.complete
-        }).count();
+        let ready_count = states
+            .iter()
+            .filter(|s| s.current.len() >= 2 || s.complete)
+            .count();
 
         let res = if ready_count == states.len() || one_buffer_is_over {
             gather_packets(states)
@@ -251,20 +248,20 @@ mod tests {
     use super::*;
     use crate::PacketStream;
     use byteorder::{ByteOrder, ReadBytesExt};
+    use failure::_core::time::Duration;
     use futures::stream;
     use futures::{Future, Stream};
-    use std::io::Cursor;
-    use std::path::PathBuf;
     use rand;
+    use std::io::Cursor;
     use std::ops::Range;
-    use failure::_core::time::Duration;
+    use std::path::PathBuf;
 
     fn make_packet(ts: usize) -> Packet {
         Packet {
             timestamp: SystemTime::UNIX_EPOCH + Duration::from_millis(ts as _),
             actual_length: 0,
             original_length: 0,
-            data: vec![]
+            data: vec![],
         }
     }
     /*
@@ -329,7 +326,8 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100)).expect("Failed to build");
+        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100))
+            .expect("Failed to build");
 
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Vec<_> = fut_packets
@@ -380,7 +378,8 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100)).expect("Failed to build");
+        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100))
+            .expect("Failed to build");
 
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
