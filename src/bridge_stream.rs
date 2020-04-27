@@ -16,7 +16,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::SystemTime;
+use std::time::{SystemTime, Duration};
 use tokio::time::Delay;
 use std::collections::BTreeMap;
 use std::thread::current;
@@ -36,6 +36,23 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
     fn is_complete(&self) -> bool {
         self.complete && self.current.is_empty()
     }
+
+    fn spread(&self) -> Duration {
+        let min = self
+            .current
+            .first().map(|s| s.first()).flatten();
+
+        let max = self
+            .current
+            .first().map(|s| s.first()).flatten();
+
+        match (min, max) {
+            (Some(min), Some(max)) => {
+                max.timestamp().duration_since(*min.timestamp()).unwrap()
+            },
+            _ => Duration::from_millis(0)
+        }
+    }
 }
 
 #[pin_project]
@@ -44,10 +61,11 @@ where
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     stream_states: VecDeque<BridgeStreamState<E, T>>,
+    max_buffer_time: Duration,
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
-    pub fn new(streams: Vec<T>) -> Result<BridgeStream<E, T>, Error> {
+    pub fn new(streams: Vec<T>, max_buffer_time: Duration) -> Result<BridgeStream<E, T>, Error> {
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for stream in streams {
             let new_state = BridgeStreamState {
@@ -60,60 +78,61 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
 
         Ok(BridgeStream {
             stream_states: stream_states,
+            max_buffer_time
         })
     }
 }
 
-fn sort_packets<I: Iterator<Item = Packet>>(mut to_sort: Vec<Peekable<I>>, size: usize) -> Vec<Packet> {
-    //let cap: usize = to_sort.iter().map(|it| it.count()).sum();
-    let mut to_return: Vec<Packet> = Vec::with_capacity(size);
-    loop {
-        let mut current_lowest: Option<(usize, SystemTime)> = None;
-        if to_sort.len() == 1 {
-            to_return.extend(to_sort.remove(0));
-        } else {
-            for (idx, it) in to_sort.iter_mut().enumerate() {
-                let curr_packet = it.peek();
-                if let Some(curr_packet) = curr_packet {
-                    let curr_ts = *curr_packet.timestamp();
-                    current_lowest = current_lowest.map(|(prev_idx, prev)| {
-                        match curr_ts.cmp(&prev) {
-                            Ordering::Less => {
-                                (idx, curr_ts)
-                            },
-                            _ => {
-                                (prev_idx, prev)
-                            }
-                        }
-                    }).or_else(|| Some((idx, curr_ts)));
-                }
-            }
-        }
-
-        to_sort = to_sort.into_iter().filter_map(|mut p| {
-            if p.peek().is_some() {
-                Some(p)
-            } else {
-                None
-            }
-        }).collect();
-
-        if let Some((idx, _)) = current_lowest {
-            let packet_opt = to_sort
-                .get_mut(idx)
-                .iter_mut()
-                .flat_map(|it| it.next())
-                .next();
-            if let Some(packet) = packet_opt {
-                to_return.push(packet)
-            }
-        } else {
-            break;
-        }
-    }
-
-    to_return
-}
+// Playing around with using the fact that all array are already sorted, however, this is not as fast as merge sort, leaving it here in case someone wants to point out optimizations.
+// fn sort_packets<I: Iterator<Item = Packet>>(mut to_sort: Vec<Peekable<I>>, size: usize) -> Vec<Packet> {
+//     //let cap: usize = to_sort.iter().map(|it| it.count()).sum();
+//     let mut to_return: Vec<Packet> = Vec::with_capacity(size);
+//     loop {
+//         let mut current_lowest: Option<(usize, SystemTime)> = None;
+//         if to_sort.len() == 1 {
+//             to_return.extend(to_sort.remove(0));
+//         } else {
+//             for (idx, it) in to_sort.iter_mut().enumerate() {
+//                 let curr_packet = it.peek();
+//                 if let Some(curr_packet) = curr_packet {
+//                     let curr_ts = *curr_packet.timestamp();
+//                     current_lowest = current_lowest.map(|(prev_idx, prev)| {
+//                         match curr_ts.cmp(&prev) {
+//                             Ordering::Less => {
+//                                 (idx, curr_ts)
+//                             },
+//                             _ => {
+//                                 (prev_idx, prev)
+//                             }
+//                         }
+//                     }).or_else(|| Some((idx, curr_ts)));
+//                 }
+//             }
+//         }
+//
+//         to_sort = to_sort.into_iter().filter_map(|mut p| {
+//             if p.peek().is_some() {
+//                 Some(p)
+//             } else {
+//                 None
+//             }
+//         }).collect();
+//
+//         if let Some((idx, _)) = current_lowest {
+//             let packet_opt = to_sort
+//                 .get_mut(idx)
+//                 .iter_mut()
+//                 .flat_map(|it| it.next())
+//                 .next();
+//             if let Some(packet) = packet_opt {
+//                 to_return.push(packet)
+//             }
+//         } else {
+//             break;
+//         }
+//     }
+//     to_return
+// }
 
 fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
@@ -166,9 +185,11 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
         let this = self.project();
         //trace!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
-
+        let max_buffer_time = this.max_buffer_time;
+        let mut max_time_spread: Duration = Duration::from_millis(0);
         let mut delay_count = 0;
         for state in states.iter_mut() {
+            max_time_spread = state.spread().max(max_time_spread);
             match Pin::new(&mut state.stream).poll_next(cx) {
                 Poll::Pending => {
                     trace!("Return Pending");
@@ -194,15 +215,14 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                 }
             }
         }
-        let reported_count = states.iter().filter(|s| {
-            s.current.len() >= 2
+
+        let one_buffer_is_over = max_time_spread > *max_buffer_time;
+
+        let ready_count = states.iter().filter(|s| {
+            s.current.len() >= 2 ||  s.complete
         }).count();
 
-        let completed_count = states.iter().filter(|s| {
-            s.complete
-        }).count();
-
-        let res = if reported_count == states.len() || completed_count == states.len() {
+        let res = if ready_count == states.len() || one_buffer_is_over {
             gather_packets(states)
         } else {
             trace!("Not reporting");
@@ -247,7 +267,7 @@ mod tests {
             data: vec![]
         }
     }
-
+    /*
     #[test]
     fn sort_correctly() {
         let max = 5000;
@@ -291,9 +311,7 @@ mod tests {
         let sorted = sorted.into_iter().map(|p| p.timestamp).collect::<Vec<_>>();
         let acc = acc.into_iter().map(|p| p.timestamp).collect::<Vec<_>>();
         assert_eq!(sorted, acc);
-
-
-    }
+    }*/
 
     #[tokio::test]
     async fn packets_from_file() {
@@ -311,7 +329,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider = BridgeStream::new(vec![packet_stream]).expect("Failed to build");
+        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100)).expect("Failed to build");
 
         let fut_packets = packet_provider.collect::<Vec<_>>();
         let packets: Vec<_> = fut_packets
@@ -362,7 +380,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider = BridgeStream::new(vec![packet_stream]).expect("Failed to build");
+        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100)).expect("Failed to build");
 
         let fut_packets = async move {
             let mut packet_provider = packet_provider.boxed();
@@ -393,7 +411,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(vec![packet_stream]);
+        let stream = BridgeStream::new(vec![packet_stream], Duration::from_millis(100));
 
         assert!(
             stream.is_ok(),
@@ -414,7 +432,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(vec![packet_stream]);
+        let stream = BridgeStream::new(vec![packet_stream], Duration::from_millis(100));
 
         assert!(
             stream.is_ok(),
@@ -446,7 +464,7 @@ mod tests {
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
 
-        let bridge = BridgeStream::new(vec![stream1, stream2]);
+        let bridge = BridgeStream::new(vec![stream1, stream2], Duration::from_millis(100));
 
         let mut result = bridge
             .expect("Unable to create BridgeStream")
