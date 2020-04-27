@@ -6,7 +6,6 @@ use crate::pcap_util;
 
 use crate::stream::StreamItem;
 use failure::Fail;
-use failure::_core::iter::Peekable;
 use futures::future::Pending;
 use futures::stream::{Stream, StreamExt};
 use log::*;
@@ -42,7 +41,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>
     fn spread(&self) -> Duration {
         let min = self.current.first().map(|s| s.first()).flatten();
 
-        let max = self.current.first().map(|s| s.first()).flatten();
+        let max = self.current.last().map(|s| s.last()).flatten();
 
         match (min, max) {
             (Some(min), Some(max)) => max.timestamp().duration_since(*min.timestamp()).unwrap(),
