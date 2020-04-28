@@ -128,14 +128,15 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
+        trace!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
         let max_buffer_time = this.max_buffer_time;
         let mut max_time_spread: Duration = Duration::from_millis(0);
         let mut delay_count = 0;
-        
-        trace!("Interfaces: {:?}", this.stream_states.len());
+       
         for state in states.iter_mut() {
             max_time_spread = state.spread().max(max_time_spread);
+            trace!("Start poll");
             match Pin::new(&mut state.stream).poll_next(cx) {
                 Poll::Pending => {
                     trace!("Return Pending");
