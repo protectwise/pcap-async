@@ -30,13 +30,12 @@ impl PacketStream {
         let live_capture = handle.is_live_capture();
 
         if live_capture {
-            handle
+            let h =handle
                 .set_snaplen(config.snaplen())?
-                .set_non_block()?
                 .set_promiscuous()?
-                .set_timeout(&std::time::Duration::from_secs(0))?
                 .set_buffer_size(config.buffer_size())?
                 .activate()?;
+            h.set_non_block()?;
 
             if let Some(bpf) = config.bpf() {
                 let bpf = handle.compile_bpf(bpf)?;

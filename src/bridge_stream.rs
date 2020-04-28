@@ -14,6 +14,7 @@ use log::*;
 use tokio::time::Delay;
 
 use pin_project::pin_project;
+use futures::stream::FuturesUnordered;
 
 use crate::config::Config;
 use crate::errors::Error;
@@ -22,12 +23,49 @@ use crate::packet::Packet;
 use crate::pcap_util;
 use crate::stream::StreamItem;
 
+#[pin_project]
+struct CallbackFuture<E, T> where
+    E: Fail + Sync + Send,
+    T: Stream<Item = StreamItem<E>> + Sized + Unpin,
+{
+    idx: usize,
+    stream: Option<T>,
+}
+
+impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Future
+  for CallbackFuture<E, T> {
+    type Output = (usize, Option<(T, StreamItem<E>)>);
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        let stream: &mut Option<T> = this.stream;
+        let idx: usize = *this.idx;
+        if let Some(mut stream) = stream.take() {
+            let polled = Pin::new(&mut stream).poll_next(cx);
+            match polled {
+                Poll::Pending => {
+                    return Poll::Pending;
+                },
+                Poll::Ready(Some(t)) => {
+                    return Poll::Ready((idx, Some((stream, t))));
+                }
+                _ => {
+                    return Poll::Ready((idx, None));
+                }
+            }
+        } else {
+            panic!("Should not not have a stream!")
+            //return Poll::Ready((idx, None));
+        }
+    }
+}
+
 struct BridgeStreamState<E, T>
 where
     E: Fail + Sync + Send,
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
-    stream: T,
+    stream: Option<T>,
     current: Vec<Vec<Packet>>,
     complete: bool,
 }
@@ -58,23 +96,31 @@ where
 {
     stream_states: VecDeque<BridgeStreamState<E, T>>,
     max_buffer_time: Duration,
+    poll_queue: FuturesUnordered<CallbackFuture<E, T>>,
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
     pub fn new(streams: Vec<T>, max_buffer_time: Duration) -> Result<BridgeStream<E, T>, Error> {
+        let mut poll_queue = FuturesUnordered::new();
         let mut stream_states = VecDeque::with_capacity(streams.len());
-        for stream in streams {
+        for (idx, stream) in streams.into_iter().enumerate() {
             let new_state = BridgeStreamState {
-                stream: stream,
+                stream: None,
                 current: vec![],
                 complete: false,
             };
+            let fut = CallbackFuture{
+                idx,
+                stream: Some(stream),
+            };
+            poll_queue.push(fut);
             stream_states.push_back(new_state);
         }
 
         Ok(BridgeStream {
             stream_states: stream_states,
             max_buffer_time,
+            poll_queue
         })
     }
 }
@@ -128,38 +174,116 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
-        trace!("Interfaces: {:?}", this.stream_states.len());
+        trace!("Interfaces: {:?} poll_queue {}", this.stream_states.len(), this.poll_queue.len());
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
         let max_buffer_time = this.max_buffer_time;
         let mut max_time_spread: Duration = Duration::from_millis(0);
-        let mut delay_count = 0;
-       
+        let mut pending = false;
+        let mut poll_queue: &mut FuturesUnordered<CallbackFuture<E, T>> = this.poll_queue;
+
+        for (idx, state) in states.iter_mut().enumerate() {
+            if let Some(stream) = state.stream.take() {
+                let f = CallbackFuture {
+                    idx,
+                    stream: Some(stream),
+                };
+                poll_queue.push(f);
+            }
+        }
+        loop {
+            match Pin::new(&mut poll_queue).poll_next(cx) {
+                Poll::Ready(Some((idx, Some((stream, Err(err)))))) => {
+                    trace!("got a error, passing upstream");
+                    return Poll::Ready(Some(Err(err)));
+                },
+                Poll::Ready(Some((idx, Some((stream, Ok(item)))))) => {
+                    //type Output = (usize, Option<(T, StreamItem<E>)>);
+                    trace!("Got Ready");
+                    if let Some(state) = states.get_mut(idx) {
+                        trace!("Appending results");
+                        max_time_spread = state.spread().max(max_time_spread);
+                        state.stream = Some(stream);
+                        state.current.push(item);
+                    }
+                },
+                Poll::Ready(Some((idx, None))) => {
+                    if let Some(state) = states.get_mut(idx) {
+                        trace!("Interface {} has completed", idx);
+                        state.complete = true;
+                        continue;
+                    }
+                },
+                Poll::Pending => {
+                    pending = true;
+                    trace!("Got Pending");
+                    break;
+                },
+                Poll::Ready(None) => {
+                    trace!("Reached the end.");
+                    break;
+                }
+
+            }
+        }
+        let one_buffer_is_over = max_time_spread > *max_buffer_time;
+
+        let ready_count = states
+            .iter()
+            .filter(|s| s.current.len() >= 2 || s.complete)
+            .count();
+        let enough_state = ready_count == states.len();
+
+        let res = if enough_state || one_buffer_is_over {
+            trace!("Reporting");
+            gather_packets(states)
+        } else {
+            trace!("Not reporting {} {}", enough_state, one_buffer_is_over);
+            vec![]
+        };
+
+        states.retain(|iface| {
+            //drop the complete interfaces
+            return !iface.is_complete();
+        });
+
+        if res.is_empty() && states.is_empty() {
+            trace!("All ifaces are complete.");
+            return Poll::Ready(None);
+        } else if pending && !states.is_empty() {
+            trace!("All ifaces are delayed.");
+            return Poll::Pending;
+        } else {
+            return Poll::Ready(Some(Ok(res)));
+        }
+        /*
         for state in states.iter_mut() {
             max_time_spread = state.spread().max(max_time_spread);
             trace!("Start poll");
-            match Pin::new(&mut state.stream).poll_next(cx) {
-                Poll::Pending => {
-                    trace!("Return Pending");
-                    delay_count = delay_count + 1;
-                    continue;
-                }
-                Poll::Ready(Some(Err(e))) => {
-                    trace!("got a error, passing upstream");
-                    return Poll::Ready(Some(Err(e)));
-                }
-                Poll::Ready(None) => {
-                    trace!("Interface has completed");
-                    state.complete = true;
-                    continue;
-                }
-                Poll::Ready(Some(Ok(v))) => {
-                    trace!("Poll returns with {} packets", v.len());
-                    if v.is_empty() {
-                        trace!("Poll returns with no packets");
+            if let Some(mut stream) = state.stream.take() {
+                match Pin::new(&mut stream).poll_next(cx) {
+                    Poll::Pending => {
+                        trace!("Return Pending");
                         delay_count = delay_count + 1;
                         continue;
                     }
-                    state.current.push(v);
+                    Poll::Ready(Some(Err(e))) => {
+                        trace!("got a error, passing upstream");
+                        return Poll::Ready(Some(Err(e)));
+                    }
+                    Poll::Ready(None) => {
+                        trace!("Interface has completed");
+                        state.complete = true;
+                        continue;
+                    }
+                    Poll::Ready(Some(Ok(v))) => {
+                        trace!("Poll returns with {} packets {}", v.len(), state.current.len());
+                        if v.is_empty() {
+                            trace!("Poll returns with no packets");
+                            delay_count = delay_count + 1;
+                            continue;
+                        }
+                        state.current.push(v);
+                    }
                 }
             }
         }
@@ -170,12 +294,13 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             .iter()
             .filter(|s| s.current.len() >= 2 || s.complete)
             .count();
+        let enought_state = ready_count == states.len();
 
-        let res = if ready_count == states.len() || one_buffer_is_over {
-            
+        let res = if enought_state || one_buffer_is_over {
+            trace!("Reporting");
             gather_packets(states)
         } else {
-            trace!("Not reporting");
+            trace!("Not reporting {} {}", enought_state, one_buffer_is_over);
             vec![]
         };
 
@@ -193,6 +318,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
         } else {
             return Poll::Ready(Some(Ok(res)));
         }
+        */
     }
 }
 
