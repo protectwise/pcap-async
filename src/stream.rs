@@ -34,7 +34,7 @@ impl PacketStream {
                 .set_snaplen(config.snaplen())?
                 .set_non_block()?
                 .set_promiscuous()?
-                .set_timeout(&std::time::Duration::from_secs(1))?
+                .set_timeout(&std::time::Duration::from_secs(0))?
                 .set_buffer_size(config.buffer_size())?
                 .activate()?;
 
