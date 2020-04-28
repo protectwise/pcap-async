@@ -128,7 +128,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
-        //trace!("Interfaces: {:?}", this.stream_states.len());
+        trace!("Interfaces: {:?}", this.stream_states.len());
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
         let max_buffer_time = this.max_buffer_time;
         let mut max_time_spread: Duration = Duration::from_millis(0);
@@ -169,6 +169,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             .count();
 
         let res = if ready_count == states.len() || one_buffer_is_over {
+            
             gather_packets(states)
         } else {
             trace!("Not reporting");
