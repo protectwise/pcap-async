@@ -76,7 +76,6 @@ impl Stream for PacketStream {
 
         match Pin::new(&mut f).poll(cx) {
             Poll::Pending => {
-                trace!("returning pending.");
                 *this.pending = Some(f);
                 Poll::Pending
             }

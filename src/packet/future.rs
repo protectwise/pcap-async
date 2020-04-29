@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::task;
-use futures::ready;
 
 extern "C" fn dispatch_callback(
     user: *mut u8,
