@@ -27,7 +27,7 @@ log = "0.4"
 mio = "0.6"
 pin-project = "0.4"
 pcap-sys = "0.1"
-tokio = {git = "https://github.com/dbcfd/tokio.git", branch = "poll-evented-error-2413", features = ["blocking", "io-driver", "rt-threaded", "time"] }
+tokio = {git = "https://github.com/dbcfd/tokio.git", branch = "poll-evented-error-2413", commit="8580e1a747854993c0d0be5a8143333b0600865a", features = ["blocking", "io-driver", "rt-threaded", "time"] }
 
 [dev-dependencies]
 rand = "0.3"
