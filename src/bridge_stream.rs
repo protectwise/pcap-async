@@ -23,6 +23,9 @@ use crate::packet::Packet;
 use crate::pcap_util;
 use crate::stream::StreamItem;
 
+
+
+
 #[pin_project]
 struct CallbackFuture<E, T> where
     E: Fail + Sync + Send,
@@ -88,6 +91,11 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>
         }
     }
 }
+
+// The BridgeStream attempts to time order packets from downstream.
+// It does this by collecting a `min_states_needed` amount of packet batches, and then sorting them.
+// We also allow `max_buffer_time` to act as a fallback in case we have 1 slow stream and one fast stream.
+// `max_buffer_time` will check the spread of packets, and if it to large it will sort what it has and pass it on.
 
 #[pin_project]
 pub struct BridgeStream<E: Fail + Sync + Send, T>
