@@ -44,22 +44,18 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Fut
             let polled = Pin::new(&mut stream).poll_next(cx);
             match polled {
                 Poll::Pending => {
-                    trace!("Callbak gets a pending");
                     std::mem::replace(this.stream, Some(stream));
                     return Poll::Pending;
                 },
                 Poll::Ready(Some(t)) => {
-                    trace!("Callbak gets a result");
                     return Poll::Ready((idx, Some((stream, t))));
                 }
                 _ => {
-                    trace!("Callbak gets a None");
                     return Poll::Ready((idx, None));
                 }
             }
         } else {
             panic!("Should not not have a stream!")
-            //return Poll::Ready((idx, None));
         }
     }
 }
@@ -100,11 +96,12 @@ where
 {
     stream_states: VecDeque<BridgeStreamState<E, T>>,
     max_buffer_time: Duration,
+    min_states_needed: usize,
     poll_queue: FuturesUnordered<CallbackFuture<E, T>>,
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
-    pub fn new(streams: Vec<T>, max_buffer_time: Duration) -> Result<BridgeStream<E, T>, Error> {
+    pub fn new(streams: Vec<T>, max_buffer_time: Duration, min_states_needed: usize) -> Result<BridgeStream<E, T>, Error> {
         let mut poll_queue = FuturesUnordered::new();
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for (idx, stream) in streams.into_iter().enumerate() {
@@ -124,6 +121,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
         Ok(BridgeStream {
             stream_states: stream_states,
             max_buffer_time,
+            min_states_needed: min_states_needed,
             poll_queue
         })
     }
@@ -180,6 +178,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
         let this = self.project();
         trace!("Interfaces: {:?} poll_queue {}", this.stream_states.len(), this.poll_queue.len());
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
+        let min_states_needed: usize = *this.min_states_needed;
         let max_buffer_time = this.max_buffer_time;
         let mut max_time_spread: Duration = Duration::from_millis(0);
         let mut not_pending: usize = 0;
@@ -187,12 +186,13 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
         loop {
             match Pin::new(&mut poll_queue).poll_next(cx) {
-                Poll::Ready(Some((idx, Some((stream, Err(err)))))) => {
+                Poll::Ready(Some((_, Some((_, Err(err)))))) => {
                     trace!("got a error, passing upstream");
                     return Poll::Ready(Some(Err(err)));
                 },
                 Poll::Ready(Some((idx, Some((stream, Ok(item)))))) => {
                     //When the future gives us a result we are given a index, that we use to locate an existing State, and re-add the stream.
+                    //For that reason the order must never change!
                     trace!("Got Ready");
                     not_pending += 1;
                     if let Some(state) = states.get_mut(idx) {
@@ -236,8 +236,9 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
         let ready_count = states
             .iter()
-            .filter(|s| s.current.len() >= 2 || s.complete)
+            .filter(|s| s.current.len() >= min_states_needed || s.complete)
             .count();
+
         let enough_state = ready_count == states.len();
 
         let res = if enough_state || one_buffer_is_over {
@@ -247,85 +248,22 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             trace!("Not reporting {} {}", enough_state, one_buffer_is_over);
             vec![]
         };
-        //TODO remove since it will wreck ordering
-        states.retain(|iface| {
-            //drop the complete interfaces
-            return !iface.is_complete();
-        });
 
-        if res.is_empty() && states.is_empty() {
-            trace!("All ifaces are complete.");
-            return Poll::Ready(None);
-        } else if not_pending == 0 && !states.is_empty() {
-            trace!("All ifaces are delayed.");
-            return Poll::Pending;
-        } else {
-            return Poll::Ready(Some(Ok(res)));
-        }
-        /*
-        for state in states.iter_mut() {
-            max_time_spread = state.spread().max(max_time_spread);
-            trace!("Start poll");
-            if let Some(mut stream) = state.stream.take() {
-                match Pin::new(&mut stream).poll_next(cx) {
-                    Poll::Pending => {
-                        trace!("Return Pending");
-                        delay_count = delay_count + 1;
-                        continue;
-                    }
-                    Poll::Ready(Some(Err(e))) => {
-                        trace!("got a error, passing upstream");
-                        return Poll::Ready(Some(Err(e)));
-                    }
-                    Poll::Ready(None) => {
-                        trace!("Interface has completed");
-                        state.complete = true;
-                        continue;
-                    }
-                    Poll::Ready(Some(Ok(v))) => {
-                        trace!("Poll returns with {} packets {}", v.len(), state.current.len());
-                        if v.is_empty() {
-                            trace!("Poll returns with no packets");
-                            delay_count = delay_count + 1;
-                            continue;
-                        }
-                        state.current.push(v);
-                    }
-                }
-            }
-        }
-
-        let one_buffer_is_over = max_time_spread > *max_buffer_time;
-
-        let ready_count = states
+        let completed_count = states
             .iter()
-            .filter(|s| s.current.len() >= 2 || s.complete)
+            .filter(|s| s.complete)
             .count();
-        let enought_state = ready_count == states.len();
 
-        let res = if enought_state || one_buffer_is_over {
-            trace!("Reporting");
-            gather_packets(states)
-        } else {
-            trace!("Not reporting {} {}", enought_state, one_buffer_is_over);
-            vec![]
-        };
-
-        states.retain(|iface| {
-            //drop the complete interfaces
-            return !iface.is_complete();
-        });
-
-        if res.is_empty() && states.is_empty() {
+        if res.is_empty() && completed_count == states.len() {
             trace!("All ifaces are complete.");
             return Poll::Ready(None);
-        } else if delay_count >= states.len() && !states.is_empty() {
+        } else if res.is_empty() && not_pending == 0 && !states.is_empty() {
             trace!("All ifaces are delayed.");
             return Poll::Pending;
         } else {
+            trace!("Returning results {}", res.len());
             return Poll::Ready(Some(Ok(res)));
         }
-        */
     }
 }
 
@@ -369,7 +307,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100))
+        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100), 2)
             .expect("Failed to build");
 
         let fut_packets = packet_provider.collect::<Vec<_>>();
@@ -421,7 +359,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100))
+        let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100), 2)
             .expect("Failed to build");
 
         let fut_packets = async move {
@@ -453,7 +391,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(vec![packet_stream], Duration::from_millis(100));
+        let stream = BridgeStream::new(vec![packet_stream], Duration::from_millis(100),2);
 
         assert!(
             stream.is_ok(),
@@ -474,7 +412,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(vec![packet_stream], Duration::from_millis(100));
+        let stream = BridgeStream::new(vec![packet_stream], Duration::from_millis(100), 2);
 
         assert!(
             stream.is_ok(),
@@ -506,7 +444,7 @@ mod tests {
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
 
-        let bridge = BridgeStream::new(vec![stream1, stream2], Duration::from_millis(100));
+        let bridge = BridgeStream::new(vec![stream1, stream2], Duration::from_millis(100), 0);
 
         let mut result = bridge
             .expect("Unable to create BridgeStream")
