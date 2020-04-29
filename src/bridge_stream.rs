@@ -44,12 +44,16 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Fut
             let polled = Pin::new(&mut stream).poll_next(cx);
             match polled {
                 Poll::Pending => {
+                    trace!("Callbak gets a pending");
+                    std::mem::replace(this.stream, Some(stream));
                     return Poll::Pending;
                 },
                 Poll::Ready(Some(t)) => {
+                    trace!("Callbak gets a result");
                     return Poll::Ready((idx, Some((stream, t))));
                 }
                 _ => {
+                    trace!("Callbak gets a None");
                     return Poll::Ready((idx, None));
                 }
             }
