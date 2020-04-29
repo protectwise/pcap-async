@@ -27,7 +27,7 @@ log = "0.4"
 mio = "0.6"
 pin-project = "0.4"
 pcap-sys = "0.1"
-tokio = { version = "0.2", features = ["blocking", "io-driver", "rt-threaded", "time"] }
+tokio = { version = "0.2.19", features = ["blocking", "io-driver", "rt-threaded", "time"] }
 
 [dev-dependencies]
 rand = "0.3"
