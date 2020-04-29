@@ -182,53 +182,61 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
         let max_buffer_time = this.max_buffer_time;
         let mut max_time_spread: Duration = Duration::from_millis(0);
-        let mut pending = false;
+        let mut not_pending: usize = 0;
         let mut poll_queue: &mut FuturesUnordered<CallbackFuture<E, T>> = this.poll_queue;
-
-        for (idx, state) in states.iter_mut().enumerate() {
-            if let Some(stream) = state.stream.take() {
-                let f = CallbackFuture {
-                    idx,
-                    stream: Some(stream),
-                };
-                poll_queue.push(f);
-            }
-        }
-        loop {
-            match Pin::new(&mut poll_queue).poll_next(cx) {
-                Poll::Ready(Some((idx, Some((stream, Err(err)))))) => {
-                    trace!("got a error, passing upstream");
-                    return Poll::Ready(Some(Err(err)));
-                },
-                Poll::Ready(Some((idx, Some((stream, Ok(item)))))) => {
-                    //type Output = (usize, Option<(T, StreamItem<E>)>);
-                    trace!("Got Ready");
-                    if let Some(state) = states.get_mut(idx) {
-                        trace!("Appending results");
-                        max_time_spread = state.spread().max(max_time_spread);
-                        state.stream = Some(stream);
-                        state.current.push(item);
+        //loop {
+            loop {
+                match Pin::new(&mut poll_queue).poll_next(cx) {
+                    Poll::Ready(Some((idx, Some((stream, Err(err)))))) => {
+                        trace!("got a error, passing upstream");
+                        return Poll::Ready(Some(Err(err)));
+                    },
+                    Poll::Ready(Some((idx, Some((stream, Ok(item)))))) => {
+                        //type Output = (usize, Option<(T, StreamItem<E>)>);
+                        trace!("Got Ready");
+                        not_pending += 1;
+                        if let Some(state) = states.get_mut(idx) {
+                            trace!("Appending results");
+                            max_time_spread = state.spread().max(max_time_spread);
+                            state.stream = Some(stream);
+                            state.current.push(item);
+                        }
+                    },
+                    Poll::Ready(Some((idx, None))) => {
+                        if let Some(state) = states.get_mut(idx) {
+                            trace!("Interface {} has completed", idx);
+                            state.complete = true;
+                            continue;
+                        }
+                    },
+                    Poll::Pending => {
+                        trace!("Got Pending");
+                        break;
+                    },
+                    Poll::Ready(None) => {
+                        trace!("Reached the end.");
+                        break;
                     }
-                },
-                Poll::Ready(Some((idx, None))) => {
-                    if let Some(state) = states.get_mut(idx) {
-                        trace!("Interface {} has completed", idx);
-                        state.complete = true;
-                        continue;
-                    }
-                },
-                Poll::Pending => {
-                    pending = true;
-                    trace!("Got Pending");
-                    break;
-                },
-                Poll::Ready(None) => {
-                    trace!("Reached the end.");
-                    break;
                 }
-
             }
-        }
+
+            //let mut readded = false;
+
+            for (idx, state) in states.iter_mut().enumerate() {
+                if let Some(stream) = state.stream.take() {
+                    //readded = true;
+                    trace!("re-adding stream to poll queue {}", idx);
+                    let f = CallbackFuture {
+                        idx,
+                        stream: Some(stream),
+                    };
+                    poll_queue.push(f);
+                }
+            }
+            // if !readded {
+            //     break;
+            // }
+        //}
         let one_buffer_is_over = max_time_spread > *max_buffer_time;
 
         let ready_count = states
@@ -253,7 +261,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
         if res.is_empty() && states.is_empty() {
             trace!("All ifaces are complete.");
             return Poll::Ready(None);
-        } else if pending && !states.is_empty() {
+        } else if not_pending == 0 && !states.is_empty() {
             trace!("All ifaces are delayed.");
             return Poll::Pending;
         } else {
