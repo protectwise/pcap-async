@@ -4,8 +4,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::thread::current;
 use std::time::{Duration, SystemTime};
+use tokio::task::JoinHandle;
 
 use failure::Fail;
 use futures::future::Pending;
@@ -26,13 +26,13 @@ use crate::stream::StreamItem;
 #[pin_project]
 struct CallbackFuture<E, T> where
     E: Fail + Sync + Send,
-    T: Stream<Item = StreamItem<E>> + Sized + Unpin,
+    T: 'static + Stream<Item = StreamItem<E>> + Sized + Unpin + Send,
 {
     idx: usize,
     stream: Option<T>,
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Future
+impl<E: Fail + Sync + Send, T: 'static + Stream<Item = StreamItem<E>> + Sized + Unpin + Send> Future
   for CallbackFuture<E, T> {
     type Output = (usize, Option<(T, StreamItem<E>)>);
 
@@ -40,16 +40,20 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Fut
         let this = self.project();
         let stream: &mut Option<T> = this.stream;
         let idx: usize = *this.idx;
+        trace!("Poll called");
         if let Some(mut stream) = stream.take() {
             let polled = Pin::new(&mut stream).poll_next(cx);
             match polled {
                 Poll::Pending => {
+                    trace!("Callback gets a Pending.");
                     return Poll::Pending;
                 },
                 Poll::Ready(Some(t)) => {
+                    trace!("Callback gets a Result.");
                     return Poll::Ready((idx, Some((stream, t))));
                 }
                 _ => {
+                    trace!("Its done");
                     return Poll::Ready((idx, None));
                 }
             }
@@ -63,14 +67,14 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Fut
 struct BridgeStreamState<E, T>
 where
     E: Fail + Sync + Send,
-    T: Stream<Item = StreamItem<E>> + Sized + Unpin,
+    T: 'static + Stream<Item = StreamItem<E>> + Sized + Unpin + Send,
 {
     stream: Option<T>,
     current: Vec<Vec<Packet>>,
     complete: bool,
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>
+impl<E: Fail + Sync + Send, T: 'static + Stream<Item = StreamItem<E>> + Sized + Unpin + Send>
     BridgeStreamState<E, T>
 {
     fn is_complete(&self) -> bool {
@@ -92,14 +96,14 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>
 #[pin_project]
 pub struct BridgeStream<E: Fail + Sync + Send, T>
 where
-    T: Stream<Item = StreamItem<E>> + Sized + Unpin,
+    T: 'static + Stream<Item = StreamItem<E>> + Sized + Unpin + Send,
 {
     stream_states: VecDeque<BridgeStreamState<E, T>>,
     max_buffer_time: Duration,
-    poll_queue: FuturesUnordered<CallbackFuture<E, T>>,
+    poll_queue: FuturesUnordered<JoinHandle<(usize, std::option::Option<(T, StreamItem<E>)>)>>
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
+impl<E: Fail + Sync + Send, T: 'static + Stream<Item = StreamItem<E>> + Sized + Unpin + Send> BridgeStream<E, T> {
     pub fn new(streams: Vec<T>, max_buffer_time: Duration) -> Result<BridgeStream<E, T>, Error> {
         let mut poll_queue = FuturesUnordered::new();
         let mut stream_states = VecDeque::with_capacity(streams.len());
@@ -109,10 +113,12 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
                 current: vec![],
                 complete: false,
             };
-            let fut = CallbackFuture{
-                idx,
-                stream: Some(stream),
-            };
+            let fut = tokio::spawn(
+                CallbackFuture{
+                    idx,
+                    stream: Some(stream),
+                }
+            );
             poll_queue.push(fut);
             stream_states.push_back(new_state);
         }
@@ -125,7 +131,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
     }
 }
 
-fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
+fn gather_packets<E: Fail + Sync + Send, T: 'static + Stream<Item = StreamItem<E>> + Sized + Unpin + Send>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
 ) -> Vec<Packet> {
     let mut result = vec![];
@@ -167,7 +173,7 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
     result
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream
+impl<E: Fail + Sync + Send, T: 'static + Stream<Item = StreamItem<E>> + Sized + Unpin + Send> Stream
     for BridgeStream<E, T>
 {
     type Item = StreamItem<E>;
@@ -179,24 +185,27 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
         let max_buffer_time = this.max_buffer_time;
         let mut max_time_spread: Duration = Duration::from_millis(0);
         let mut pending = false;
-        let mut poll_queue: &mut FuturesUnordered<CallbackFuture<E, T>> = this.poll_queue;
+        let mut poll_queue: &mut FuturesUnordered<JoinHandle<(usize, std::option::Option<(T, StreamItem<E>)>)>> = this.poll_queue;
 
         for (idx, state) in states.iter_mut().enumerate() {
             if let Some(stream) = state.stream.take() {
-                let f = CallbackFuture {
+                trace!("Spawning");
+                let f = tokio::spawn(CallbackFuture {
                     idx,
                     stream: Some(stream),
-                };
+                });
                 poll_queue.push(f);
             }
         }
+        trace!("Call loop start");
         loop {
+            trace!("Call loop iterating");
             match Pin::new(&mut poll_queue).poll_next(cx) {
-                Poll::Ready(Some((idx, Some((stream, Err(err)))))) => {
+                Poll::Ready(Some(Ok((idx, Some((stream, Err(err))))))) => {
                     trace!("got a error, passing upstream");
                     return Poll::Ready(Some(Err(err)));
                 },
-                Poll::Ready(Some((idx, Some((stream, Ok(item)))))) => {
+                Poll::Ready(Some(Ok((idx, Some((stream, Ok(item))))))) => {
                     //type Output = (usize, Option<(T, StreamItem<E>)>);
                     trace!("Got Ready");
                     if let Some(state) = states.get_mut(idx) {
@@ -206,7 +215,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                         state.current.push(item);
                     }
                 },
-                Poll::Ready(Some((idx, None))) => {
+                Poll::Ready(Some(Ok((idx, None)))) => {
                     if let Some(state) = states.get_mut(idx) {
                         trace!("Interface {} has completed", idx);
                         state.complete = true;
@@ -221,6 +230,9 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                 Poll::Ready(None) => {
                     trace!("Reached the end.");
                     break;
+                }
+                _ => {
+                    panic!("derp");
                 }
 
             }
@@ -245,6 +257,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             //drop the complete interfaces
             return !iface.is_complete();
         });
+        trace!("poll_queue after {}", this.poll_queue.len());
 
         if res.is_empty() && states.is_empty() {
             trace!("All ifaces are complete.");
