@@ -48,6 +48,7 @@ struct DispatchArgs {
 
 impl DispatchArgs {
     async fn poll(&self, timeout: Option<Duration>) -> Result<(), Error> {
+        trace!("Polling FD with timeout {:?}", timeout);
         let ev = mio::unix::EventedFd(&self.fd);
         let ready = mio::Ready::from_usize(
             mio::Ready::readable().as_usize()
@@ -64,6 +65,7 @@ impl DispatchArgs {
         } else {
             f.await?;
         }
+        trace!("Polling FD done");
         Ok(())
     }
 }
@@ -107,6 +109,7 @@ async fn dispatch(args: DispatchArgs) -> Result<DispatchResult, Error> {
     };
 
     while !args.pcap_handle.interrupted() {
+        trace!("Calling pcap_dispatch.");
         let ret_code = unsafe {
             pcap_sys::pcap_dispatch(
                 args.pcap_handle.as_mut_ptr(),
