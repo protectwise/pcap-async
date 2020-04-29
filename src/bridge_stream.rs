@@ -86,7 +86,14 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>
         let max = self.current.last().map(|s| s.last()).flatten();
 
         match (min, max) {
-            (Some(min), Some(max)) => max.timestamp().duration_since(*min.timestamp()).unwrap(),
+            (Some(min), Some(max)) => {
+                let since = max.timestamp().duration_since(*min.timestamp());
+                if let Ok(since) = since {
+                    return since
+                } else {
+                    Duration::from_millis(0)
+                }
+            },
             _ => Duration::from_millis(0),
         }
     }
