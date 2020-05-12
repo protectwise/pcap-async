@@ -4,7 +4,6 @@ use crate::handle::Handle;
 use crate::packet::{Packet, PacketFuture};
 use crate::pcap_util;
 
-use failure::Fail;
 use futures::stream::{Stream, StreamExt};
 use log::*;
 use pin_project::pin_project;
@@ -13,7 +12,6 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::time::Delay;
 
 pub type StreamItem<E> = Result<Vec<Packet>, E>;
 
@@ -104,8 +102,8 @@ mod tests {
     use std::io::Cursor;
     use std::path::PathBuf;
 
-    #[tokio::test]
-    async fn packets_from_file() {
+    #[test]
+    fn packets_from_file() {
         let _ = env_logger::try_init();
 
         let pcap_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -117,18 +115,22 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packet_provider =
-            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
-        let fut_packets = packet_provider.collect::<Vec<_>>();
-        let packets: Vec<_> = fut_packets
-            .await
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|p| p.data().len() == p.actual_length() as usize)
-            .collect();
+        let packets = smol::run(async move {
+            let packet_provider =
+                PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+            let fut_packets = packet_provider.collect::<Vec<_>>();
+            let packets: Vec<_> = fut_packets
+                .await
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|p| p.data().len() == p.actual_length() as usize)
+                .collect();
 
-        handle.interrupt();
+            handle.interrupt();
+
+            packets
+        });
 
         assert_eq!(packets.len(), 10);
 
@@ -153,8 +155,8 @@ mod tests {
         assert_eq!(actual_length, 54);
     }
 
-    #[tokio::test]
-    async fn packets_from_file_next() {
+    #[test]
+    fn packets_from_file_next() {
         let _ = env_logger::try_init();
 
         let pcap_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -163,27 +165,31 @@ mod tests {
 
         info!("Testing against {:?}", pcap_path);
 
-        let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
-            .expect("No handle created");
+        let packets = smol::run(async move {
+            let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
+                .expect("No handle created");
 
-        let packet_provider =
-            PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
-        let fut_packets = async move {
-            let mut packet_provider = packet_provider.boxed();
-            let mut packets = vec![];
-            while let Some(p) = packet_provider.next().await {
-                packets.extend(p);
-            }
+            let packet_provider =
+                PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+            let fut_packets = async move {
+                let mut packet_provider = packet_provider.boxed();
+                let mut packets = vec![];
+                while let Some(p) = packet_provider.next().await {
+                    packets.extend(p);
+                }
+                packets
+            };
+            let packets = fut_packets
+                .await
+                .into_iter()
+                .flatten()
+                .filter(|p| p.data().len() == p.actual_length() as _)
+                .count();
+
+            handle.interrupt();
+
             packets
-        };
-        let packets = fut_packets
-            .await
-            .into_iter()
-            .flatten()
-            .filter(|p| p.data().len() == p.actual_length() as _)
-            .count();
-
-        handle.interrupt();
+        });
 
         assert_eq!(packets, 10);
     }
@@ -203,12 +209,9 @@ mod tests {
 
         let mut stream = stream.unwrap();
 
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async move {
-            tokio::spawn(async move {
-                stream.next().await.unwrap().unwrap();
-            })
-        });
+        smol::run(async move { stream.next().await })
+            .unwrap()
+            .unwrap();
     }
 
     #[test]

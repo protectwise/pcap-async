@@ -19,6 +19,10 @@ pub struct Packet {
 }
 
 impl Packet {
+    pub fn into_data(self) -> Vec<u8> {
+        self.data
+    }
+
     pub fn into_pcap_record<T: ByteOrder>(self) -> Result<Vec<u8>, Error> {
         self.as_pcap_record::<T>()
     }

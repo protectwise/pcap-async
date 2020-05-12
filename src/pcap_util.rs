@@ -19,7 +19,7 @@ pub fn convert_libpcap_error(handle: *mut pcap_sys::pcap_t) -> Error {
         Err(e) => e,
         Ok(err) => {
             error!("LibPcap encountered an error: {}", err);
-            Error::LibPcapError { msg: err }
+            Error::LibPcapError(err)
         }
     }
 }

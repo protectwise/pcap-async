@@ -2,13 +2,13 @@ use crate::packet::Packets;
 use crate::{Config, Error, Handle, Packet};
 
 use log::*;
+use mio::Evented;
 use pin_project::pin_project;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use tokio::task;
 
 extern "C" fn dispatch_callback(
     user: *mut u8,
@@ -46,27 +46,37 @@ struct DispatchArgs {
     buffer_for: Duration,
 }
 
-impl DispatchArgs {
-    async fn poll(&self, timeout: Option<Duration>) -> Result<(), Error> {
-        trace!("Polling FD with timeout {:?}", timeout);
-        let ev = mio::unix::EventedFd(&self.fd);
-        let ready = mio::Ready::from_usize(
-            mio::Ready::readable().as_usize()
-                | mio::unix::UnixReady::error().as_usize()
-                | mio::unix::UnixReady::hup().as_usize(),
-        );
-        let ev = tokio::io::PollEvented::new_with_ready(ev, ready).map_err(Error::Io)?;
-        let f = tokio::future::poll_fn(|cx| {
-            ev.poll_read_ready(cx, mio::Ready::readable())
-                .map_err(Error::Io)
-        });
-        if let Some(dur) = timeout {
-            let _r = tokio::time::timeout(dur, f).await;
-        } else {
-            f.await?;
+pub enum InterfaceReady {
+    Yes,
+    No,
+}
+
+async fn poll_ready(
+    fd: std::os::unix::io::RawFd,
+    timeout: Option<Duration>,
+) -> Result<InterfaceReady, Error> {
+    let poll = mio::Poll::new().map_err(Error::Io)?;
+    let ev = mio::unix::EventedFd(&fd);
+    let ready =
+        mio::Ready::from_usize(mio::Ready::all().as_usize() & !mio::Ready::writable().as_usize());
+    let opts = mio::PollOpt::edge();
+    ev.register(&poll, mio::Token(0), ready, opts)
+        .map_err(Error::Io)?;
+    let mut events = mio::Events::with_capacity(1);
+    if poll.poll(&mut events, timeout).map_err(Error::Io)? > 0 {
+        for event in events {
+            if event.readiness().is_readable() {
+                return Ok(InterfaceReady::Yes);
+            }
         }
-        trace!("Polling FD done");
-        Ok(())
+    }
+    Ok(InterfaceReady::No)
+}
+
+impl DispatchArgs {
+    async fn poll(&self, timeout: Option<Duration>) -> Result<InterfaceReady, Error> {
+        trace!("Polling FD with timeout {:?}", timeout);
+        smol::Task::blocking(poll_ready(self.fd.clone(), timeout)).await
     }
 }
 
@@ -152,7 +162,12 @@ async fn dispatch(args: DispatchArgs) -> Result<DispatchResult, Error> {
                         args.buffer_for
                             .checked_sub(Instant::now().duration_since(started_at))
                     };
-                    args.poll(timeout).await?;
+                    if let InterfaceReady::No = args.poll(timeout).await? {
+                        return Ok(DispatchResult {
+                            args: args,
+                            result: Some(packets.into_inner()),
+                        });
+                    }
                 }
             }
             0 if !packets.is_empty() => {
