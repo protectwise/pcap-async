@@ -33,7 +33,7 @@ impl Handle {
                 error!("Failed to create live stream: {}", msg);
                 Err(Error::LiveCapture {
                     iface: iface.to_string(),
-                    error: Error::LibPcapError { msg: msg }.into(),
+                    error: msg,
                 })
             })
         } else {
@@ -54,9 +54,7 @@ impl Handle {
         let path = if let Some(s) = path.as_ref().to_str() {
             s
         } else {
-            return Err(Error::Custom {
-                msg: format!("Invalid path: {:?}", path.as_ref()),
-            });
+            return Err(Error::Custom(format!("Invalid path: {:?}", path.as_ref())));
         };
         let device_str = std::ffi::CString::new(path).map_err(Error::Ffi)?;
 
@@ -67,7 +65,7 @@ impl Handle {
                 error!("Failed to create file stream: {}", msg);
                 Err(Error::FileCapture {
                     file: path.to_string(),
-                    error: Error::LibPcapError { msg: msg }.into(),
+                    error: msg,
                 })
             })
         } else {
@@ -88,9 +86,7 @@ impl Handle {
         let h = unsafe { pcap_sys::pcap_open_dead(linktype as c_int, snaplen as c_int) };
         if h.is_null() {
             error!("Failed to create dead handle");
-            Err(Error::Custom {
-                msg: "Could not create dead handle".to_owned(),
-            })
+            Err(Error::Custom("Could not create dead handle".to_owned()))
         } else {
             info!("Dead handle created");
             let handle = std::sync::Arc::new(Handle {
@@ -106,8 +102,7 @@ impl Handle {
         let errbuf = ([0i8; 256]).as_mut_ptr();
         let dev = unsafe { pcap_sys::pcap_lookupdev(errbuf) };
         let res = if dev.is_null() {
-            pcap_util::cstr_to_string(errbuf as _)
-                .and_then(|msg| Err(Error::LibPcapError { msg: msg }))
+            pcap_util::cstr_to_string(errbuf as _).and_then(|msg| Err(Error::LibPcapError(msg)))
         } else {
             pcap_util::cstr_to_string(dev as _).and_then(|s| {
                 debug!("Lookup found interface {}", s);
@@ -123,7 +118,7 @@ impl Handle {
         if -1 == unsafe { pcap_sys::pcap_setnonblock(self.handle, 1, errbuf) } {
             pcap_util::cstr_to_string(errbuf as _).and_then(|msg| {
                 error!("Failed to set non block: {}", msg);
-                Err(Error::LibPcapError { msg: msg })
+                Err(Error::LibPcapError(msg))
             })
         } else {
             Ok(self)

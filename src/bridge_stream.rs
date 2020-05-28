@@ -7,11 +7,9 @@ use std::task::{Context, Poll};
 use std::thread::current;
 use std::time::{Duration, SystemTime};
 
-use failure::Fail;
 use futures::future::Pending;
 use futures::stream::{Stream, StreamExt};
 use log::*;
-use tokio::time::Delay;
 
 use futures::stream::FuturesUnordered;
 use pin_project::pin_project;
@@ -26,14 +24,14 @@ use crate::stream::StreamItem;
 #[pin_project]
 struct CallbackFuture<E, T>
 where
-    E: Fail + Sync + Send,
+    E: Sync + Send,
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     idx: usize,
     stream: Option<T>,
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Future
+impl<E: Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Future
     for CallbackFuture<E, T>
 {
     type Output = (usize, Option<(T, StreamItem<E>)>);
@@ -64,7 +62,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Fut
 
 struct BridgeStreamState<E, T>
 where
-    E: Fail + Sync + Send,
+    E: Sync + Send,
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
     stream: Option<T>,
@@ -72,9 +70,7 @@ where
     complete: bool,
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>
-    BridgeStreamState<E, T>
-{
+impl<E: Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStreamState<E, T> {
     fn is_complete(&self) -> bool {
         self.complete && self.current.is_empty()
     }
@@ -104,7 +100,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>
 // `max_buffer_time` will check the spread of packets, and if it to large it will sort what it has and pass it on.
 
 #[pin_project]
-pub struct BridgeStream<E: Fail + Sync + Send, T>
+pub struct BridgeStream<E: Sync + Send, T>
 where
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
@@ -114,7 +110,7 @@ where
     poll_queue: FuturesUnordered<CallbackFuture<E, T>>,
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
+impl<E: Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
     pub fn new(
         streams: Vec<T>,
         max_buffer_time: Duration,
@@ -145,7 +141,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
     }
 }
 
-fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
+fn gather_packets<E: Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>(
     stream_states: &mut VecDeque<BridgeStreamState<E, T>>,
 ) -> Vec<Packet> {
     let mut result = vec![];
@@ -187,7 +183,7 @@ fn gather_packets<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized
     result
 }
 
-impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream
+impl<E: Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Stream
     for BridgeStream<E, T>
 {
     type Item = StreamItem<E>;
@@ -310,8 +306,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn packets_from_file() {
+    #[test]
+    fn packets_from_file() {
         let _ = env_logger::try_init();
 
         let pcap_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -329,16 +325,20 @@ mod tests {
         let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100), 2)
             .expect("Failed to build");
 
-        let fut_packets = packet_provider.collect::<Vec<_>>();
-        let packets: Vec<_> = fut_packets
-            .await
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|p| p.data().len() == p.actual_length() as usize)
-            .collect();
+        let packets = smol::run(async move {
+            let fut_packets = packet_provider.collect::<Vec<_>>();
+            let packets: Vec<_> = fut_packets
+                .await
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|p| p.data().len() == p.actual_length() as usize)
+                .collect();
 
-        handle.interrupt();
+            handle.interrupt();
+
+            packets
+        });
 
         assert_eq!(packets.len(), 10);
 
@@ -362,8 +362,9 @@ mod tests {
         );
         assert_eq!(actual_length, 54);
     }
-    #[tokio::test]
-    async fn packets_from_file_next_bridge() {
+
+    #[test]
+    fn packets_from_file_next_bridge() {
         let _ = env_logger::try_init();
 
         let pcap_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -381,23 +382,27 @@ mod tests {
         let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100), 2)
             .expect("Failed to build");
 
-        let fut_packets = async move {
-            let mut packet_provider = packet_provider.boxed();
-            let mut packets = vec![];
-            while let Some(p) = packet_provider.next().await {
-                info!("packets returned {:?}", p);
-                packets.extend(p);
-            }
-            packets
-        };
-        let packets = fut_packets
-            .await
-            .into_iter()
-            .flatten()
-            .filter(|p| p.data().len() == p.actual_length() as _)
-            .count();
+        let packets = smol::run(async move {
+            let fut_packets = async move {
+                let mut packet_provider = packet_provider.boxed();
+                let mut packets = vec![];
+                while let Some(p) = packet_provider.next().await {
+                    info!("packets returned {:?}", p);
+                    packets.extend(p);
+                }
+                packets
+            };
+            let packets = fut_packets
+                .await
+                .into_iter()
+                .flatten()
+                .filter(|p| p.data().len() == p.actual_length() as _)
+                .count();
 
-        handle.interrupt();
+            handle.interrupt();
+
+            packets
+        });
 
         assert_eq!(packets, 10);
     }
@@ -438,8 +443,9 @@ mod tests {
             format!("Could not build stream {}", stream.err().unwrap())
         );
     }
-    #[tokio::test]
-    async fn packets_come_out_time_ordered() {
+
+    #[test]
+    fn packets_come_out_time_ordered() {
         let mut packets1 = vec![];
         let mut packets2 = vec![];
 
@@ -463,17 +469,19 @@ mod tests {
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
 
-        let bridge = BridgeStream::new(vec![stream1, stream2], Duration::from_millis(100), 0);
+        let result = smol::run(async move {
+            let bridge = BridgeStream::new(vec![stream1, stream2], Duration::from_millis(100), 0);
 
-        let mut result = bridge
-            .expect("Unable to create BridgeStream")
-            .collect::<Vec<StreamItem<Error>>>()
-            .await;
-        let result = result
-            .into_iter()
-            .map(|r| r.unwrap())
-            .flatten()
-            .collect::<Vec<Packet>>();
+            let result = bridge
+                .expect("Unable to create BridgeStream")
+                .collect::<Vec<StreamItem<Error>>>()
+                .await;
+            result
+                .into_iter()
+                .map(|r| r.unwrap())
+                .flatten()
+                .collect::<Vec<Packet>>()
+        });
         info!("Result {:?}", result);
 
         let mut expected = vec![packets1, packets2]

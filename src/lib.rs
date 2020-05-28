@@ -7,16 +7,17 @@
 //! use pcap_async::{Config, Handle, PacketStream};
 //! use std::sync::Arc;
 //!
-//! #[tokio::main]
-//! async fn main() {
+//! fn main() {
 //!     let handle = Handle::lookup().expect("No handle created");
-//!     let mut provider = PacketStream::new(Config::default(), Arc::clone(&handle))
-//!         .expect("Could not create provider")
-//!         .boxed();
-//!     while let Some(packets) = provider.next().await {
+//!     smol::run(async move {
+//!         let mut provider = PacketStream::new(Config::default(), Arc::clone(&handle))
+//!             .expect("Could not create provider")
+//!             .boxed();
+//!         while let Some(packets) = provider.next().await {
 //!
-//!     }
-//!     handle.interrupt();
+//!         }
+//!         handle.interrupt();
+//!     });
 //! }
 #![deny(unused_must_use, unused_imports, bare_trait_objects)]
 #![allow(dead_code, unused_imports)]
@@ -36,7 +37,6 @@ pub use crate::{
     packet::Packet, stats::Stats, stream::PacketStream, stream::StreamItem,
 };
 pub use byteorder::{BigEndian, LittleEndian, NativeEndian, WriteBytesExt};
-use failure::Fail;
 use log::*;
 use std::sync::Arc;
 
@@ -46,8 +46,8 @@ mod tests {
     use futures::StreamExt;
     use std::path::PathBuf;
 
-    #[tokio::test]
-    async fn capture_from_file() {
+    #[test]
+    fn capture_from_file() {
         let _ = env_logger::try_init();
 
         let pcap_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -64,17 +64,22 @@ mod tests {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
-        let packet_provider = PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
-            .expect("Failed to build");
-        let fut_packets = packet_provider.collect::<Vec<_>>();
-        let packets: Result<Vec<_>, Error> = fut_packets.await.into_iter().collect();
-        let packets = packets
-            .expect("Could not get packets")
-            .iter()
-            .flatten()
-            .count();
+        let packets = smol::run(async move {
+            let packet_provider =
+                PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
+                    .expect("Failed to build");
+            let fut_packets = packet_provider.collect::<Vec<_>>();
+            let packets: Result<Vec<_>, Error> = fut_packets.await.into_iter().collect();
+            let packets = packets
+                .expect("Could not get packets")
+                .iter()
+                .flatten()
+                .count();
 
-        handle.interrupt();
+            handle.interrupt();
+
+            packets
+        });
 
         assert_eq!(packets, 246137);
     }

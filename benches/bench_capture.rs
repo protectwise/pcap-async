@@ -15,8 +15,6 @@ fn bench_stream_from_large_file(b: &mut Bencher) {
     info!("Benchmarking against {:?}", pcap_path.clone());
 
     b.iter(|| {
-        let mut rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-
         let clone_path = pcap_path.clone();
 
         let handle = Handle::file_capture(clone_path.to_str().expect("No path found"))
@@ -25,17 +23,22 @@ fn bench_stream_from_large_file(b: &mut Bencher) {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
-        let packet_provider = PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
-            .expect("Failed to build");
-        let packets = rt.block_on(packet_provider.collect::<Vec<_>>());
-        let packets: Result<Vec<_>, pcap_async::Error> = packets.into_iter().collect();
-        let packets = packets
-            .expect("Failed to get packets")
-            .iter()
-            .flatten()
-            .count();
+        let packets = smol::run(async move {
+            let packet_provider =
+                PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
+                    .expect("Failed to build");
+            let packets = packet_provider.collect::<Vec<_>>().await;
+            let packets: Result<Vec<_>, pcap_async::Error> = packets.into_iter().collect();
+            let packets = packets
+                .expect("Failed to get packets")
+                .iter()
+                .flatten()
+                .count();
 
-        handle.interrupt();
+            handle.interrupt();
+
+            packets
+        });
 
         assert_eq!(packets, 246137);
     });
@@ -63,8 +66,6 @@ fn bench_stream_next_from_large_file_bridge(b: &mut Bencher) {
     info!("Benchmarking against {:?}", pcap_path.clone());
 
     b.iter(|| {
-        let mut rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-
         let clone_path = pcap_path.clone();
 
         let handle1 = Handle::file_capture(clone_path.to_str().expect("No path found"))
@@ -81,23 +82,28 @@ fn bench_stream_next_from_large_file_bridge(b: &mut Bencher) {
             .map(|h| PacketStream::new(Config::default(), h).unwrap())
             .collect();
 
-        let packet_provider = BridgeStream::new(Config::default().retry_after().clone(), streams)
-            .expect("Failed to build");
-        let fut_packets = async move {
-            let mut packet_provider = packet_provider.boxed();
-            let mut packets = vec![];
-            while let Some(p) = packet_provider.next().await {
-                let p = p.expect("Could not get packets");
-                packets.extend(p);
+        let packets = smol::run(async move {
+            let packet_provider =
+                BridgeStream::new(streams, Config::default().buffer_for().clone(), 0)
+                    .expect("Failed to build");
+            let packets = async move {
+                let mut packet_provider = packet_provider.boxed();
+                let mut packets = vec![];
+                while let Some(p) = packet_provider.next().await {
+                    let p = p.expect("Could not get packets");
+                    packets.extend(p);
+                }
+                packets
             }
+            .await;
+
+            handle1.interrupt();
+            handle2.interrupt();
+
             packets
-        };
-        let packets = rt.block_on(fut_packets).len();
+        });
 
-        handle1.interrupt();
-        handle2.interrupt();
-
-        assert_eq!(packets, 246137 * 2);
+        assert_eq!(packets.len(), 246137 * 2);
     });
 }
 
@@ -111,8 +117,6 @@ fn bench_stream_next_from_large_file(b: &mut Bencher) {
     info!("Benchmarking against {:?}", pcap_path.clone());
 
     b.iter(|| {
-        let mut rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-
         let clone_path = pcap_path.clone();
 
         let handle = Handle::file_capture(clone_path.to_str().expect("No path found"))
@@ -121,22 +125,23 @@ fn bench_stream_next_from_large_file(b: &mut Bencher) {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
-        let packet_provider = PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
-            .expect("Failed to build");
-        let fut_packets = async move {
+        let packets = smol::run(async move {
+            let packet_provider =
+                PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
+                    .expect("Failed to build");
             let mut packet_provider = packet_provider.boxed();
             let mut packets = vec![];
             while let Some(p) = packet_provider.next().await {
                 let p = p.expect("Could not get packets");
                 packets.extend(p);
             }
+
+            handle.interrupt();
+
             packets
-        };
-        let packets = rt.block_on(fut_packets).len();
+        });
 
-        handle.interrupt();
-
-        assert_eq!(packets, 246137);
+        assert_eq!(packets.len(), 246137);
     });
 }
 

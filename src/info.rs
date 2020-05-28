@@ -23,9 +23,7 @@ impl Info {
                 let err_str =
                     std::ffi::CStr::from_bytes_with_nul(err.as_ref()).map_err(Error::FfiNul)?;
                 let utf_str = err_str.to_str().map_err(Error::Utf8)?;
-                return Err(Error::LibPcapError {
-                    msg: utf_str.to_owned(),
-                });
+                return Err(Error::LibPcapError(utf_str.to_owned()));
             }
         }
 

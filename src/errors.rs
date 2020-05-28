@@ -1,39 +1,29 @@
-use failure::{err_msg, Fail};
+use thiserror::Error as ThisError;
 
-#[derive(Debug, Fail)]
+#[derive(Debug, ThisError)]
 pub enum Error {
-    #[fail(display = "IO Error")]
-    Io(#[fail(cause)] std::io::Error),
-    #[fail(display = "Null pointer when dealing with ffi")]
-    Ffi(#[fail(cause)] std::ffi::NulError),
-    #[fail(display = "Nul Error when dealing with ffi")]
-    FfiNul(#[fail(cause)] std::ffi::FromBytesWithNulError),
-    #[fail(display = "Utf8 conversion error")]
-    Utf8(#[fail(cause)] std::str::Utf8Error),
-    #[fail(display = "Time conversion error")]
-    Time(#[fail(cause)] std::time::SystemTimeError),
-    #[fail(display = "Task error")]
-    Task(#[fail(cause)] tokio::task::JoinError),
-    #[fail(display = "Null ptr returned")]
+    #[error("IO Error")]
+    Io(#[from] std::io::Error),
+    #[error("Null pointer when dealing with ffi")]
+    Ffi(#[from] std::ffi::NulError),
+    #[error("Nul Error when dealing with ffi")]
+    FfiNul(#[from] std::ffi::FromBytesWithNulError),
+    #[error("Utf8 conversion error")]
+    Utf8(#[from] std::str::Utf8Error),
+    #[error("Time conversion error")]
+    Time(#[from] std::time::SystemTimeError),
+    #[error("Null ptr returned")]
     NullPtr,
-    #[fail(display = "Libpcap failed populate header")]
+    #[error("Libpcap failed populate header")]
     CreatePacketHeader,
-    #[fail(display = "Libpcap encountered an error: {}", msg)]
-    LibPcapError { msg: String },
-    #[fail(display = "Failed to create live capture for interface {}", iface)]
-    LiveCapture {
-        iface: String,
-        #[fail(cause)]
-        error: failure::Error,
-    },
-    #[fail(display = "Failed to create file capture for file {}", file)]
-    FileCapture {
-        file: String,
-        #[fail(cause)]
-        error: failure::Error,
-    },
-    #[fail(display = "{}", msg)]
-    Custom { msg: String },
+    #[error("Libpcap encountered an error: {0}")]
+    LibPcapError(String),
+    #[error("Failed to create live capture for interface {iface}: {error}")]
+    LiveCapture { iface: String, error: String },
+    #[error("Failed to create file capture for file {file}: {error}")]
+    FileCapture { file: String, error: String },
+    #[error("{0}")]
+    Custom(String),
 }
 
 unsafe impl Sync for Error {}
