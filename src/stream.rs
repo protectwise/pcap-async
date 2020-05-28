@@ -30,7 +30,7 @@ impl PacketStream {
         let live_capture = handle.is_live_capture();
 
         if live_capture {
-            let h =handle
+            let h = handle
                 .set_snaplen(config.snaplen())?
                 .set_promiscuous()?
                 .set_buffer_size(config.buffer_size())?

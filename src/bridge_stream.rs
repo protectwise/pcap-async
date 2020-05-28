@@ -13,8 +13,8 @@ use futures::stream::{Stream, StreamExt};
 use log::*;
 use tokio::time::Delay;
 
-use pin_project::pin_project;
 use futures::stream::FuturesUnordered;
+use pin_project::pin_project;
 
 use crate::config::Config;
 use crate::errors::Error;
@@ -23,11 +23,9 @@ use crate::packet::Packet;
 use crate::pcap_util;
 use crate::stream::StreamItem;
 
-
-
-
 #[pin_project]
-struct CallbackFuture<E, T> where
+struct CallbackFuture<E, T>
+where
     E: Fail + Sync + Send,
     T: Stream<Item = StreamItem<E>> + Sized + Unpin,
 {
@@ -36,7 +34,8 @@ struct CallbackFuture<E, T> where
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Future
-  for CallbackFuture<E, T> {
+    for CallbackFuture<E, T>
+{
     type Output = (usize, Option<(T, StreamItem<E>)>);
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -49,7 +48,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Fut
                 Poll::Pending => {
                     std::mem::replace(this.stream, Some(stream));
                     return Poll::Pending;
-                },
+                }
                 Poll::Ready(Some(t)) => {
                     return Poll::Ready((idx, Some((stream, t))));
                 }
@@ -89,11 +88,11 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin>
             (Some(min), Some(max)) => {
                 let since = max.timestamp().duration_since(*min.timestamp());
                 if let Ok(since) = since {
-                    return since
+                    return since;
                 } else {
                     Duration::from_millis(0)
                 }
-            },
+            }
             _ => Duration::from_millis(0),
         }
     }
@@ -116,7 +115,11 @@ where
 }
 
 impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> BridgeStream<E, T> {
-    pub fn new(streams: Vec<T>, max_buffer_time: Duration, min_states_needed: usize) -> Result<BridgeStream<E, T>, Error> {
+    pub fn new(
+        streams: Vec<T>,
+        max_buffer_time: Duration,
+        min_states_needed: usize,
+    ) -> Result<BridgeStream<E, T>, Error> {
         let mut poll_queue = FuturesUnordered::new();
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for (idx, stream) in streams.into_iter().enumerate() {
@@ -125,7 +128,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
                 current: vec![],
                 complete: false,
             };
-            let fut = CallbackFuture{
+            let fut = CallbackFuture {
                 idx,
                 stream: Some(stream),
             };
@@ -137,7 +140,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
             stream_states: stream_states,
             max_buffer_time,
             min_states_needed: min_states_needed,
-            poll_queue
+            poll_queue,
         })
     }
 }
@@ -191,7 +194,11 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
-        trace!("Interfaces: {:?} poll_queue {}", this.stream_states.len(), this.poll_queue.len());
+        trace!(
+            "Interfaces: {:?} poll_queue {}",
+            this.stream_states.len(),
+            this.poll_queue.len()
+        );
         let states: &mut VecDeque<BridgeStreamState<E, T>> = this.stream_states;
         let min_states_needed: usize = *this.min_states_needed;
         let max_buffer_time = this.max_buffer_time;
@@ -204,7 +211,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                 Poll::Ready(Some((_, Some((_, Err(err)))))) => {
                     trace!("got a error, passing upstream");
                     return Poll::Ready(Some(Err(err)));
-                },
+                }
                 Poll::Ready(Some((idx, Some((stream, Ok(item)))))) => {
                     //When the future gives us a result we are given a index, that we use to locate an existing State, and re-add the stream.
                     //For that reason the order must never change!
@@ -216,18 +223,18 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
                         state.stream = Some(stream);
                         state.current.push(item);
                     }
-                },
+                }
                 Poll::Ready(Some((idx, None))) => {
                     if let Some(state) = states.get_mut(idx) {
                         trace!("Interface {} has completed", idx);
                         state.complete = true;
                         continue;
                     }
-                },
+                }
                 Poll::Pending => {
                     trace!("Got Pending");
                     break;
-                },
+                }
                 Poll::Ready(None) => {
                     trace!("Reached the end.");
                     break;
@@ -264,10 +271,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Str
             vec![]
         };
 
-        let completed_count = states
-            .iter()
-            .filter(|s| s.complete)
-            .count();
+        let completed_count = states.iter().filter(|s| s.complete).count();
 
         if res.is_empty() && completed_count == states.len() {
             trace!("All ifaces are complete.");
@@ -289,8 +293,8 @@ mod tests {
     use std::path::PathBuf;
 
     use byteorder::{ByteOrder, ReadBytesExt};
-    use futures::{Future, Stream};
     use futures::stream;
+    use futures::{Future, Stream};
     use rand;
 
     use crate::PacketStream;
@@ -406,7 +410,7 @@ mod tests {
         let packet_stream =
             PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
 
-        let stream = BridgeStream::new(vec![packet_stream], Duration::from_millis(100),2);
+        let stream = BridgeStream::new(vec![packet_stream], Duration::from_millis(100), 2);
 
         assert!(
             stream.is_ok(),
