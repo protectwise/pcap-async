@@ -120,7 +120,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Bri
         max_buffer_time: Duration,
         min_states_needed: usize,
     ) -> Result<BridgeStream<E, T>, Error> {
-        let mut poll_queue = FuturesUnordered::new();
+        let poll_queue = FuturesUnordered::new();
         let mut stream_states = VecDeque::with_capacity(streams.len());
         for (idx, stream) in streams.into_iter().enumerate() {
             let new_state = BridgeStreamState {
