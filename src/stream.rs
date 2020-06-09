@@ -33,7 +33,9 @@ impl PacketStream {
                 .set_promiscuous()?
                 .set_buffer_size(config.buffer_size())?
                 .activate()?;
-            h.set_non_block()?;
+            if !config.blocking() {
+                h.set_non_block()?;
+            }
 
             if let Some(bpf) = config.bpf() {
                 let bpf = handle.compile_bpf(bpf)?;
