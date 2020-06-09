@@ -156,6 +156,39 @@ mod tests {
     }
 
     #[test]
+    fn packets_from_large_file() {
+        let _ = env_logger::try_init();
+
+        let pcap_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("4SICS-GeekLounge-151020.pcap");
+
+        info!("Testing against {:?}", pcap_path);
+
+        let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
+            .expect("No handle created");
+
+        let packets = smol::run(async move {
+            let packet_provider =
+                PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+            let fut_packets = packet_provider.collect::<Vec<_>>();
+            let packets: Vec<_> = fut_packets
+                .await
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|p| p.data().len() == p.actual_length() as usize)
+                .collect();
+
+            handle.interrupt();
+
+            packets
+        });
+
+        assert_eq!(packets.len(), 246137);
+    }
+
+    #[test]
     fn packets_from_file_next() {
         let _ = env_logger::try_init();
 

@@ -144,39 +144,45 @@ async fn dispatch(args: DispatchArgs) -> Result<DispatchResult, Error> {
                 error!("Error encountered when calling pcap_dispatch: {}", err);
                 return Err(err);
             }
-            0 if args.live_capture => {
-                trace!("No packets in buffer");
-                if should_return_packets(packets.len()) {
-                    debug!(
-                        "Capture loop returning with {} packets",
-                        args.max_packets_read
-                    );
-                    return Ok(DispatchResult {
-                        args: args,
-                        result: Some(packets.into_inner()),
-                    });
-                } else {
-                    let timeout = if packets.is_empty() {
-                        None
-                    } else {
-                        args.buffer_for
-                            .checked_sub(Instant::now().duration_since(started_at))
-                    };
-                    if let InterfaceReady::No = args.poll(timeout).await? {
+            0 => {
+                if args.live_capture {
+                    trace!("No packets in buffer");
+                    if should_return_packets(packets.len()) {
+                        debug!(
+                            "Capture loop returning with {} packets",
+                            args.max_packets_read
+                        );
                         return Ok(DispatchResult {
                             args: args,
                             result: Some(packets.into_inner()),
                         });
+                    } else {
+                        let timeout = if packets.is_empty() {
+                            None
+                        } else {
+                            args.buffer_for
+                                .checked_sub(Instant::now().duration_since(started_at))
+                        };
+                        if let InterfaceReady::No = args.poll(timeout).await? {
+                            return Ok(DispatchResult {
+                                args: args,
+                                result: Some(packets.into_inner()),
+                            });
+                        }
                     }
+                } else {
+                    debug!("Not live capture and no packets, calling breakloop");
+                    unsafe { pcap_sys::pcap_breakloop(args.pcap_handle.as_mut_ptr()) }
+                    let res = if packets.is_empty() {
+                        None
+                    } else {
+                        Some(packets.into_inner())
+                    };
+                    return Ok(DispatchResult {
+                        args: args,
+                        result: res,
+                    });
                 }
-            }
-            0 if !packets.is_empty() => {
-                debug!("Not live capture and no packets, calling breakloop");
-                unsafe { pcap_sys::pcap_breakloop(args.pcap_handle.as_mut_ptr()) }
-                return Ok(DispatchResult {
-                    args: args,
-                    result: Some(packets.into_inner()),
-                });
             }
             x if x > 0 => {
                 trace!("Capture loop captured {} packets", x);
