@@ -10,7 +10,7 @@ pub struct Info {
 
 impl Info {
     pub fn all() -> Result<Vec<Info>, Error> {
-        let mut err_buf = vec![0u8 as std::os::raw::c_char; pcap_sys::PCAP_ERRBUF_SIZE as _];
+        let mut err_buf = vec![0 as std::os::raw::c_char; pcap_sys::PCAP_ERRBUF_SIZE as _];
         let mut device_result: *mut pcap_sys::pcap_if_t = std::ptr::null_mut();
 
         unsafe {
