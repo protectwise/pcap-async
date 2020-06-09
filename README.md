@@ -5,12 +5,12 @@
 [![docs.rs docs][docs-badge]][docs-url]
 [![MIT licensed][mit-badge]][mit-url]
 
-Rust async wrapper around [pcap-sys](https://github.com/protectwise/pcap-sys). Utilizes [Futures 0.3](https://github.com/rust-lang-nursery/futures-rs) and [Tokio](https://github.com/tokio-rs/tokio).
+Rust async wrapper around [pcap-sys](https://github.com/protectwise/pcap-sys). Utilizes [Futures 0.3](https://github.com/rust-lang-nursery/futures-rs) and [Smol](https://github.com/stjepang/smol).
 
 [Documentation](https://docs.rs/pcap-async/latest/)
 
-[travis-badge]: https://travis-ci.com/dbcfd/pcap-async.svg?branch=master
-[travis-url]: https://travis-ci.com/dbcfd/pcap-async
+[travis-badge]: https://travis-ci.com/protectwise/pcap-async.svg?branch=master
+[travis-url]: https://travis-ci.com/protectwise/pcap-async
 [crates-badge]: https://img.shields.io/crates/v/pcap-async.svg?style=flat-square
 [crates-url]: https://crates.io/crates/pcap-async
 [docs-badge]: https://img.shields.io/badge/docs.rs-latest-blue.svg?style=flat-square
@@ -24,7 +24,7 @@ First, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-pcap-async = "0.1"
+pcap-async = "0.3"
 ```
 
 Next, add this to your crate:
@@ -33,15 +33,16 @@ Next, add this to your crate:
 use futures::StreamExt;
 use pcap_async::{Config, Handle, PacketStream};
 
-#[tokio::main]
-async fn main() {
-    let handle = Handle::lookup().expect("No handle created");
-    let mut provider = PacketStream::new(Config::default(), handle)
-        .expect("Could not create provider")
-        .fuse();
-    while let Some(packets) = provider.next().await {
-
-    }
-    handle.interrupt();
+fn main() {
+    smol::run(async move {
+        let handle = Handle::lookup().expect("No handle created");
+        let mut provider = PacketStream::new(Config::default(), handle)
+            .expect("Could not create provider")
+            .fuse();
+        while let Some(packets) = provider.next().await {
+    
+        }
+        handle.interrupt();
+    })
 }
 ```
