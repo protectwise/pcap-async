@@ -25,11 +25,11 @@ pub fn convert_libpcap_error(handle: *mut pcap_sys::pcap_t) -> Error {
 }
 
 #[inline]
-pub fn cstr_to_string(err: *mut libc::c_char) -> Result<String, Error> {
+pub fn cstr_to_string(err: *mut std::os::raw::c_char) -> Result<String, Error> {
     if err.is_null() {
         Err(Error::NullPtr)
     } else {
-        unsafe { std::ffi::CStr::from_ptr(err as _) }
+        unsafe { std::ffi::CStr::from_ptr(err) }
             .to_str()
             .map_err(Error::Utf8)
             .map(|s| s.to_owned())

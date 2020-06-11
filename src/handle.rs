@@ -26,8 +26,8 @@ impl Handle {
     pub fn live_capture(iface: &str) -> Result<std::sync::Arc<Handle>, Error> {
         let device_str = std::ffi::CString::new(iface).map_err(Error::Ffi)?;
 
-        let errbuf = ([0i8; 256]).as_mut_ptr();
-        let h = unsafe { pcap_sys::pcap_create(device_str.as_ptr(), errbuf) };
+        let errbuf = ([0 as std::os::raw::c_char; 256]).as_mut_ptr();
+        let h = unsafe { pcap_sys::pcap_create(device_str.as_ptr() as _, errbuf) };
         let r = if h.is_null() {
             pcap_util::cstr_to_string(errbuf).and_then(|msg| {
                 error!("Failed to create live stream: {}", msg);
@@ -58,10 +58,10 @@ impl Handle {
         };
         let device_str = std::ffi::CString::new(path).map_err(Error::Ffi)?;
 
-        let errbuf = ([0i8; 256]).as_mut_ptr();
-        let h = unsafe { pcap_sys::pcap_open_offline(device_str.as_ptr(), errbuf) };
+        let errbuf = ([0 as std::os::raw::c_char; 256]).as_mut_ptr();
+        let h = unsafe { pcap_sys::pcap_open_offline(device_str.as_ptr() as _, errbuf) };
         let r = if h.is_null() {
-            pcap_util::cstr_to_string(errbuf).and_then(|msg| {
+            pcap_util::cstr_to_string(errbuf as _).and_then(|msg| {
                 error!("Failed to create file stream: {}", msg);
                 Err(Error::FileCapture {
                     file: path.to_string(),
@@ -99,7 +99,7 @@ impl Handle {
     }
 
     pub fn lookup() -> Result<std::sync::Arc<Handle>, Error> {
-        let errbuf = ([0i8; 256]).as_mut_ptr();
+        let errbuf = ([0 as std::os::raw::c_char; 256]).as_mut_ptr();
         let dev = unsafe { pcap_sys::pcap_lookupdev(errbuf) };
         let res = if dev.is_null() {
             pcap_util::cstr_to_string(errbuf as _).and_then(|msg| Err(Error::LibPcapError(msg)))
@@ -114,7 +114,7 @@ impl Handle {
     }
 
     pub fn set_non_block(&self) -> Result<&Self, Error> {
-        let errbuf = ([0i8; 256]).as_mut_ptr();
+        let errbuf = ([0 as std::os::raw::c_char; 256]).as_mut_ptr();
         if -1 == unsafe { pcap_sys::pcap_setnonblock(self.handle, 1, errbuf) } {
             pcap_util::cstr_to_string(errbuf as _).and_then(|msg| {
                 error!("Failed to set non block: {}", msg);
