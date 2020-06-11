@@ -7,6 +7,7 @@ pub struct Config {
     buffer_size: u32,
     bpf: Option<String>,
     buffer_for: std::time::Duration,
+    blocking: bool,
 }
 
 impl Config {
@@ -55,12 +56,22 @@ impl Config {
         self
     }
 
+    pub fn blocking(&self) -> bool {
+        self.blocking
+    }
+
+    pub fn with_blocking(&mut self, blocking: bool) -> &mut Self {
+        self.blocking = blocking;
+        self
+    }
+
     pub fn new(
         max_packets_read: usize,
         snaplen: u32,
         buffer_size: u32,
         bpf: Option<String>,
         buffer_for: std::time::Duration,
+        blocking: bool,
     ) -> Config {
         Config {
             max_packets_read,
@@ -68,6 +79,7 @@ impl Config {
             buffer_size,
             bpf,
             buffer_for,
+            blocking,
         }
     }
 }
@@ -80,6 +92,7 @@ impl Default for Config {
             buffer_size: 16777216,
             bpf: None,
             buffer_for: std::time::Duration::from_millis(100),
+            blocking: false,
         }
     }
 }
