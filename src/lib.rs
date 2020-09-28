@@ -9,7 +9,7 @@
 //!
 //! fn main() {
 //!     let handle = Handle::lookup().expect("No handle created");
-//!     smol::run(async move {
+//!     smol::block_on(async move {
 //!         let mut provider = PacketStream::new(Config::default(), Arc::clone(&handle))
 //!             .expect("Could not create provider")
 //!             .boxed();
@@ -64,7 +64,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
-        let packets = smol::run(async move {
+        let packets = smol::block_on(async move {
             let packet_provider =
                 PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
                     .expect("Failed to build");
