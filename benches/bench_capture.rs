@@ -23,7 +23,7 @@ fn bench_stream_from_large_file(b: &mut Bencher) {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
-        let packets = smol::run(async move {
+        let packets = smol::block_on(async move {
             let packet_provider =
                 PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
                     .expect("Failed to build");
@@ -82,7 +82,7 @@ fn bench_stream_next_from_large_file_bridge(b: &mut Bencher) {
             .map(|h| PacketStream::new(Config::default(), h).unwrap())
             .collect();
 
-        let packets = smol::run(async move {
+        let packets = smol::block_on(async move {
             let packet_provider =
                 BridgeStream::new(streams, Config::default().buffer_for().clone(), 0)
                     .expect("Failed to build");
@@ -125,7 +125,7 @@ fn bench_stream_next_from_large_file(b: &mut Bencher) {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
-        let packets = smol::run(async move {
+        let packets = smol::block_on(async move {
             let packet_provider =
                 PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
                     .expect("Failed to build");

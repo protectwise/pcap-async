@@ -76,7 +76,7 @@ async fn poll_ready(
 impl DispatchArgs {
     async fn poll(&self, timeout: Option<Duration>) -> Result<InterfaceReady, Error> {
         trace!("Polling FD with timeout {:?}", timeout);
-        smol::Task::blocking(poll_ready(self.fd.clone(), timeout)).await
+        smol::block_on(poll_ready(self.fd.clone(), timeout))
     }
 }
 
