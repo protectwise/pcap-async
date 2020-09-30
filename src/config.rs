@@ -5,6 +5,7 @@ pub struct Config {
     max_packets_read: usize,
     snaplen: u32,
     buffer_size: u32,
+    datalink: Option<i32>,
     bpf: Option<String>,
     buffer_for: std::time::Duration,
     blocking: bool,
@@ -26,6 +27,15 @@ impl Config {
 
     pub fn with_snaplen(&mut self, amt: u32) -> &mut Self {
         self.snaplen = amt;
+        self
+    }
+
+    pub fn datalink(&self) -> &Option<i32> {
+        &self.datalink
+    }
+
+    pub fn with_datalink_type(&mut self, datalink: i32) -> &mut Self {
+        self.datalink = Some(datalink);
         self
     }
 
@@ -69,6 +79,7 @@ impl Config {
         max_packets_read: usize,
         snaplen: u32,
         buffer_size: u32,
+        datalink: Option<i32>,
         bpf: Option<String>,
         buffer_for: std::time::Duration,
         blocking: bool,
@@ -77,6 +88,7 @@ impl Config {
             max_packets_read,
             snaplen,
             buffer_size,
+            datalink,
             bpf,
             buffer_for,
             blocking,
@@ -90,6 +102,7 @@ impl Default for Config {
             max_packets_read: 1000,
             snaplen: 65535,
             buffer_size: 16777216,
+            datalink: None,
             bpf: None,
             buffer_for: std::time::Duration::from_millis(100),
             blocking: false,

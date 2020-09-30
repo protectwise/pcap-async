@@ -157,6 +157,23 @@ impl Handle {
         }
     }
 
+    pub fn set_datalink(&self, datalink: i32) -> Result<&Self, Error> {
+        if 0 != unsafe { pcap_sys::pcap_set_datalink(self.handle, datalink as _) } {
+            Err(pcap_util::convert_libpcap_error(self.handle))
+        } else {
+            Ok(self)
+        }
+    }
+
+    pub fn get_datalink(&self) -> Result<i32, Error> {
+        let r = unsafe { pcap_sys::pcap_datalink(self.handle) };
+        if r < 0 {
+            Err(pcap_util::convert_libpcap_error(self.handle))
+        } else {
+            Ok(r)
+        }
+    }
+
     pub fn compile_bpf(&self, bpf: &str) -> Result<Bpf, Error> {
         let mut bpf_program = pcap_sys::bpf_program {
             bf_len: 0,
@@ -297,6 +314,7 @@ mod tests {
 
         assert!(handle.is_ok());
     }
+
     #[test]
     fn open_dead() {
         let _ = env_logger::try_init();
@@ -305,6 +323,22 @@ mod tests {
 
         assert!(handle.is_ok());
     }
+
+    #[test]
+    fn set_datalink() {
+        let _ = env_logger::try_init();
+
+        let handle = Handle::dead(0, 0).unwrap();
+
+        assert_eq!(handle.get_datalink().unwrap(), 0);
+
+        let r = handle.set_datalink(108);
+
+        assert!(r.is_err());
+
+        assert!(format!("{:?}", r.err().unwrap()).contains("not one of the DLTs supported"));
+    }
+
     #[test]
     fn bpf_compile() {
         let _ = env_logger::try_init();

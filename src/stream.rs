@@ -28,13 +28,16 @@ impl PacketStream {
         let live_capture = handle.is_live_capture();
 
         if live_capture {
-            let h = handle
+            handle
                 .set_snaplen(config.snaplen())?
                 .set_promiscuous()?
-                .set_buffer_size(config.buffer_size())?
-                .activate()?;
+                .set_buffer_size(config.buffer_size())?;
+            if let Some(datalink) = config.datalink() {
+                handle.set_datalink(*datalink)?;
+            }
+            handle.activate()?;
             if !config.blocking() {
-                h.set_non_block()?;
+                handle.set_non_block()?;
             }
 
             if let Some(bpf) = config.bpf() {
