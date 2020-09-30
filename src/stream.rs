@@ -1,8 +1,5 @@
-use crate::config::Config;
-use crate::errors::Error;
-use crate::handle::Handle;
-use crate::packet::{Packet, PacketFuture};
-use crate::pcap_util;
+use crate::packet::PacketFuture;
+use crate::{Config, Error, Handle, Packet, Stats};
 
 use futures::stream::{Stream, StreamExt};
 use log::*;
@@ -13,7 +10,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-pub type StreamItem<E> = Result<Vec<Packet>, E>;
+pub type StreamItem = Result<Vec<Packet>, Error>;
+
+pub trait Interruptable: Stream<Item = StreamItem> {
+    fn interrupt(&self);
+}
 
 #[pin_project]
 pub struct PacketStream {
@@ -23,37 +24,50 @@ pub struct PacketStream {
     complete: bool,
 }
 
+impl Interruptable for PacketStream {
+    fn interrupt(&self) {
+        self.handle.interrupt()
+    }
+}
+
 impl PacketStream {
-    pub fn new(config: Config, handle: Arc<Handle>) -> Result<PacketStream, Error> {
-        let live_capture = handle.is_live_capture();
-
-        if live_capture {
-            let h = handle
-                .set_snaplen(config.snaplen())?
-                .set_promiscuous()?
-                .set_buffer_size(config.buffer_size())?
-                .activate()?;
-            if !config.blocking() {
-                h.set_non_block()?;
-            }
-
-            if let Some(bpf) = config.bpf() {
-                let bpf = handle.compile_bpf(bpf)?;
-                handle.set_bpf(bpf)?;
-            }
-        }
-
-        Ok(PacketStream {
+    pub fn new(config: Config, handle: Handle) -> PacketStream {
+        PacketStream {
             config: config,
-            handle: handle,
+            handle: Arc::new(handle),
             pending: None,
             complete: false,
-        })
+        }
+    }
+
+    pub fn handle(&self) -> Arc<Handle> {
+        self.handle.clone()
+    }
+
+    pub fn stats(&self) -> Result<Stats, Error> {
+        self.handle.stats()
+    }
+
+    pub fn interrupted(&self) -> bool {
+        self.handle.interrupted()
+    }
+
+    pub fn interrupt(&self) {
+        self.handle.interrupt()
+    }
+}
+
+impl std::convert::TryFrom<Config> for PacketStream {
+    type Error = Error;
+
+    fn try_from(v: Config) -> Result<Self, Self::Error> {
+        let handle = Handle::try_from(&v)?;
+        Ok(PacketStream::new(v, handle))
     }
 }
 
 impl Stream for PacketStream {
-    type Item = StreamItem<Error>;
+    type Item = StreamItem;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
@@ -99,8 +113,10 @@ impl Stream for PacketStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Interface;
     use byteorder::{ByteOrder, ReadBytesExt};
     use futures::{Future, Stream};
+    use std::convert::TryFrom;
     use std::io::Cursor;
     use std::path::PathBuf;
 
@@ -114,12 +130,11 @@ mod tests {
 
         info!("Testing against {:?}", pcap_path);
 
-        let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
-            .expect("No handle created");
+        let mut cfg = Config::default();
+        cfg.with_interface(Interface::File(pcap_path));
 
         let packets = smol::block_on(async move {
-            let packet_provider =
-                PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+            let packet_provider = PacketStream::try_from(cfg).expect("Failed to build");
             let fut_packets = packet_provider.collect::<Vec<_>>();
             let packets: Vec<_> = fut_packets
                 .await
@@ -128,8 +143,6 @@ mod tests {
                 .flatten()
                 .filter(|p| p.data().len() == p.actual_length() as usize)
                 .collect();
-
-            handle.interrupt();
 
             packets
         });
@@ -167,12 +180,11 @@ mod tests {
 
         info!("Testing against {:?}", pcap_path);
 
-        let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
-            .expect("No handle created");
+        let mut cfg = Config::default();
+        cfg.with_interface(Interface::File(pcap_path));
 
         let packets = smol::block_on(async move {
-            let packet_provider =
-                PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+            let packet_provider = PacketStream::try_from(cfg).expect("Failed to build");
             let fut_packets = packet_provider.collect::<Vec<_>>();
             let packets: Vec<_> = fut_packets
                 .await
@@ -181,8 +193,6 @@ mod tests {
                 .flatten()
                 .filter(|p| p.data().len() == p.actual_length() as usize)
                 .collect();
-
-            handle.interrupt();
 
             packets
         });
@@ -200,12 +210,11 @@ mod tests {
 
         info!("Testing against {:?}", pcap_path);
 
-        let packets = smol::block_on(async move {
-            let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
-                .expect("No handle created");
+        let mut cfg = Config::default();
+        cfg.with_interface(Interface::File(pcap_path));
 
-            let packet_provider =
-                PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
+        let packets = smol::block_on(async move {
+            let packet_provider = PacketStream::try_from(cfg).expect("Failed to build");
             let fut_packets = async move {
                 let mut packet_provider = packet_provider.boxed();
                 let mut packets = vec![];
@@ -218,10 +227,8 @@ mod tests {
                 .await
                 .into_iter()
                 .flatten()
-                .filter(|p| p.data().len() == p.actual_length() as _)
+                .filter(|p| p.data().len() == p.actual_length() as usize)
                 .count();
-
-            handle.interrupt();
 
             packets
         });
@@ -233,13 +240,14 @@ mod tests {
     fn packets_from_lookup() {
         let _ = env_logger::try_init();
 
-        let handle = Handle::lookup().expect("No handle created");
+        let mut cfg = Config::default();
+        cfg.with_interface(Interface::Lookup);
 
-        let stream = PacketStream::new(Config::default(), handle);
+        let stream = PacketStream::try_from(cfg);
 
         assert!(
             stream.is_ok(),
-            format!("Could not build stream {}", stream.err().unwrap())
+            format!("Could not build stream {:?}", stream.err().unwrap())
         );
 
         let mut stream = stream.unwrap();
@@ -258,13 +266,13 @@ mod tests {
             "(not (net 172.16.0.0/16 and port 443)) and (not (host 172.17.76.33 and port 443))"
                 .to_owned(),
         );
-        let handle = Handle::lookup().expect("No handle created");
+        cfg.with_interface(Interface::Lookup);
 
-        let stream = PacketStream::new(cfg, handle);
+        let stream = PacketStream::try_from(cfg);
 
         assert!(
             stream.is_ok(),
-            format!("Could not build stream {}", stream.err().unwrap())
+            format!("Could not build stream {:?}", stream.err().unwrap())
         );
     }
 }
