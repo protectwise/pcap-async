@@ -51,7 +51,7 @@ pub enum InterfaceReady {
     No,
 }
 
-async fn poll_ready(
+fn poll_ready(
     fd: std::os::unix::io::RawFd,
     timeout: Option<Duration>,
 ) -> Result<InterfaceReady, Error> {
@@ -76,7 +76,8 @@ async fn poll_ready(
 impl DispatchArgs {
     async fn poll(&self, timeout: Option<Duration>) -> Result<InterfaceReady, Error> {
         trace!("Polling FD with timeout {:?}", timeout);
-        smol::block_on(poll_ready(self.fd.clone(), timeout))
+        let fd = self.fd.clone();
+        smol::unblock(move || poll_ready(fd, timeout)).await
     }
 }
 
