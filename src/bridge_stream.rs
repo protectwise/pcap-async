@@ -46,7 +46,7 @@ impl<E: Fail + Sync + Send, T: Stream<Item = StreamItem<E>> + Sized + Unpin> Fut
             let polled = Pin::new(&mut stream).poll_next(cx);
             match polled {
                 Poll::Pending => {
-                    std::mem::replace(this.stream, Some(stream));
+                    *this.stream = Some(stream);
                     return Poll::Pending;
                 }
                 Poll::Ready(Some(t)) => {

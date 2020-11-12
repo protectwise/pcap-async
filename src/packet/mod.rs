@@ -55,6 +55,14 @@ impl Packet {
         Ok(())
     }
 
+    pub fn map<T, F: Fn(Self) -> T>(self, f: F) -> T {
+        f(self)
+    }
+
+    pub fn into_data(self) -> Vec<u8> {
+        self.data
+    }
+
     pub fn timestamp(&self) -> &std::time::SystemTime {
         &self.timestamp
     }
