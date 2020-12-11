@@ -1,16 +1,37 @@
 use std;
+use std::path::PathBuf;
+
+#[derive(Clone, Debug)]
+pub enum Interface {
+    Dead { linktype: i32, snaplen: i32 },
+    Live(String),
+    Lookup,
+    File(PathBuf),
+}
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    interface: Interface,
     max_packets_read: usize,
     snaplen: u32,
     buffer_size: u32,
+    datalink: Option<i32>,
     bpf: Option<String>,
     buffer_for: std::time::Duration,
     blocking: bool,
+    rfmon: bool,
 }
 
 impl Config {
+    pub fn interface(&self) -> &Interface {
+        &self.interface
+    }
+
+    pub fn with_interface(&mut self, iface: Interface) -> &mut Self {
+        self.interface = iface;
+        self
+    }
+
     pub fn max_packets_read(&self) -> usize {
         self.max_packets_read
     }
@@ -26,6 +47,15 @@ impl Config {
 
     pub fn with_snaplen(&mut self, amt: u32) -> &mut Self {
         self.snaplen = amt;
+        self
+    }
+
+    pub fn datalink(&self) -> &Option<i32> {
+        &self.datalink
+    }
+
+    pub fn with_datalink_type(&mut self, datalink: i32) -> &mut Self {
+        self.datalink = Some(datalink);
         self
     }
 
@@ -65,34 +95,28 @@ impl Config {
         self
     }
 
-    pub fn new(
-        max_packets_read: usize,
-        snaplen: u32,
-        buffer_size: u32,
-        bpf: Option<String>,
-        buffer_for: std::time::Duration,
-        blocking: bool,
-    ) -> Config {
-        Config {
-            max_packets_read,
-            snaplen,
-            buffer_size,
-            bpf,
-            buffer_for,
-            blocking,
-        }
+    pub fn rfmon(&self) -> bool {
+        self.rfmon
+    }
+
+    pub fn with_rfmon(&mut self, rfmon: bool) -> &mut Self {
+        self.rfmon = rfmon;
+        self
     }
 }
 
 impl Default for Config {
     fn default() -> Config {
         Config {
+            interface: Interface::Lookup,
             max_packets_read: 1000,
             snaplen: 65535,
             buffer_size: 16777216,
+            datalink: None,
             bpf: None,
             buffer_for: std::time::Duration::from_millis(100),
             blocking: false,
+            rfmon: false,
         }
     }
 }

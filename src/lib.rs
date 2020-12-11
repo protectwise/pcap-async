@@ -6,17 +6,17 @@
 //! use futures::StreamExt;
 //! use pcap_async::{Config, Handle, PacketStream};
 //! use std::sync::Arc;
+//! use std::convert::TryFrom;
 //!
 //! fn main() {
-//!     let handle = Handle::lookup().expect("No handle created");
+//!     let cfg = Config::default();
 //!     smol::block_on(async move {
-//!         let mut provider = PacketStream::new(Config::default(), Arc::clone(&handle))
-//!             .expect("Could not create provider")
-//!             .boxed();
+//!         let mut provider = PacketStream::try_from(cfg)
+//!             .expect("Could not create provider");
 //!         while let Some(packets) = provider.next().await {
 //!
 //!         }
-//!         handle.interrupt();
+//!         provider.interrupt();
 //!     });
 //! }
 #![deny(unused_must_use, unused_imports, bare_trait_objects)]
@@ -33,8 +33,15 @@ mod stats;
 mod stream;
 
 pub use crate::{
-    bridge_stream::BridgeStream, config::Config, errors::Error, handle::Handle, info::Info,
-    packet::Packet, stats::Stats, stream::PacketStream, stream::StreamItem,
+    bridge_stream::BridgeStream,
+    config::{Config, Interface},
+    errors::Error,
+    handle::Handle,
+    info::Info,
+    packet::Packet,
+    stats::Stats,
+    stream::PacketStream,
+    stream::StreamItem,
 };
 pub use byteorder::{BigEndian, LittleEndian, NativeEndian, WriteBytesExt};
 use log::*;
@@ -44,6 +51,7 @@ use std::sync::Arc;
 mod tests {
     use super::*;
     use futures::StreamExt;
+    use std::convert::TryFrom;
     use std::path::PathBuf;
 
     #[test]
@@ -56,18 +64,12 @@ mod tests {
 
         info!("Benchmarking against {:?}", pcap_path.clone());
 
-        let clone_path = pcap_path.clone();
-
-        let handle = Handle::file_capture(clone_path.to_str().expect("No path found"))
-            .expect("No handle created");
-
         let mut cfg = Config::default();
+        cfg.with_interface(Interface::File(pcap_path));
         cfg.with_max_packets_read(5000);
 
         let packets = smol::block_on(async move {
-            let packet_provider =
-                PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
-                    .expect("Failed to build");
+            let packet_provider = PacketStream::try_from(cfg).expect("Failed to build");
             let fut_packets = packet_provider.collect::<Vec<_>>();
             let packets: Result<Vec<_>, Error> = fut_packets.await.into_iter().collect();
             let packets = packets
@@ -76,11 +78,9 @@ mod tests {
                 .flatten()
                 .count();
 
-            handle.interrupt();
-
             packets
         });
 
-        assert_eq!(packets, 246137);
+        assert_eq!(packets, 246_137);
     }
 }

@@ -24,7 +24,7 @@ First, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-pcap-async = "0.3"
+pcap-async = "0.5"
 ```
 
 Next, add this to your crate:
@@ -32,17 +32,17 @@ Next, add this to your crate:
 ```rust
 use futures::StreamExt;
 use pcap_async::{Config, Handle, PacketStream};
+use std::convert::TryFrom;
 
 fn main() {
     smol::run(async move {
-        let handle = Handle::lookup().expect("No handle created");
-        let mut provider = PacketStream::new(Config::default(), handle)
-            .expect("Could not create provider")
-            .fuse();
+        let cfg = Config::default();
+        let mut provider = PacketStream::try_from(cfg)
+            .expect("Could not create provider");
         while let Some(packets) = provider.next().await {
     
         }
-        handle.interrupt();
+        provider.interrupt();
     })
 }
 ```
