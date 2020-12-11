@@ -185,6 +185,14 @@ impl PendingHandle {
         }
     }
 
+    pub fn set_rfmon(self) -> Result<Self, Error> {
+        if 0 != unsafe { pcap_sys::pcap_set_rfmon(self.handle, 1) } {
+            Err(pcap_util::convert_libpcap_error(self.handle))
+        } else {
+            Ok(self)
+        }
+    }
+
     pub fn activate(self) -> Result<Handle, Error> {
         let h = Handle {
             handle: self.handle,
@@ -216,6 +224,9 @@ impl std::convert::TryFrom<&Config> for PendingHandle {
                 .set_snaplen(v.snaplen())?
                 .set_promiscuous()?
                 .set_buffer_size(v.buffer_size())?;
+            if v.rfmon() {
+                pending = pending.set_rfmon()?;
+            }
         }
 
         Ok(pending)

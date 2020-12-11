@@ -19,6 +19,7 @@ pub struct Config {
     bpf: Option<String>,
     buffer_for: std::time::Duration,
     blocking: bool,
+    rfmon: bool,
 }
 
 impl Config {
@@ -93,6 +94,15 @@ impl Config {
         self.blocking = blocking;
         self
     }
+
+    pub fn rfmon(&self) -> bool {
+        self.rfmon
+    }
+
+    pub fn with_rfmon(&mut self, rfmon: bool) -> &mut Self {
+        self.rfmon = rfmon;
+        self
+    }
 }
 
 impl Default for Config {
@@ -106,6 +116,7 @@ impl Default for Config {
             bpf: None,
             buffer_for: std::time::Duration::from_millis(100),
             blocking: false,
+            rfmon: false,
         }
     }
 }
