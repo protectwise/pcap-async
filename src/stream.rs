@@ -117,7 +117,7 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packets = smol::block_on(async move {
+        let packets = futures::executor::block_on(async move {
             let packet_provider =
                 PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
             let fut_packets = packet_provider.collect::<Vec<_>>();
@@ -170,7 +170,7 @@ mod tests {
         let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
             .expect("No handle created");
 
-        let packets = smol::block_on(async move {
+        let packets = futures::executor::block_on(async move {
             let packet_provider =
                 PacketStream::new(Config::default(), Arc::clone(&handle)).expect("Failed to build");
             let fut_packets = packet_provider.collect::<Vec<_>>();
@@ -200,7 +200,7 @@ mod tests {
 
         info!("Testing against {:?}", pcap_path);
 
-        let packets = smol::block_on(async move {
+        let packets = futures::executor::block_on(async move {
             let handle = Handle::file_capture(pcap_path.to_str().expect("No path found"))
                 .expect("No handle created");
 
@@ -239,12 +239,13 @@ mod tests {
 
         assert!(
             stream.is_ok(),
-            format!("Could not build stream {}", stream.err().unwrap())
+            "Could not build stream {}",
+            stream.err().unwrap()
         );
 
         let mut stream = stream.unwrap();
 
-        smol::block_on(async move { stream.next().await })
+        futures::executor::block_on(async move { stream.next().await })
             .unwrap()
             .unwrap();
     }
@@ -264,7 +265,8 @@ mod tests {
 
         assert!(
             stream.is_ok(),
-            format!("Could not build stream {}", stream.err().unwrap())
+            "Could not build stream {}",
+            stream.err().unwrap()
         );
     }
 }

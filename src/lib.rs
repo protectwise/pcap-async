@@ -64,7 +64,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.with_max_packets_read(5000);
 
-        let packets = smol::block_on(async move {
+        let packets = futures::executor::block_on(async move {
             let packet_provider =
                 PacketStream::new(Config::default(), std::sync::Arc::clone(&handle))
                     .expect("Failed to build");
