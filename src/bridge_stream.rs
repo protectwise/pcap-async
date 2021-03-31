@@ -325,7 +325,7 @@ mod tests {
         let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100), 2)
             .expect("Failed to build");
 
-        let packets = smol::block_on(async move {
+        let packets = futures::executor::block_on(async move {
             let fut_packets = packet_provider.collect::<Vec<_>>();
             let packets: Vec<_> = fut_packets
                 .await
@@ -382,7 +382,7 @@ mod tests {
         let packet_provider = BridgeStream::new(vec![packet_stream], Duration::from_millis(100), 2)
             .expect("Failed to build");
 
-        let packets = smol::block_on(async move {
+        let packets = futures::executor::block_on(async move {
             let fut_packets = async move {
                 let mut packet_provider = packet_provider.boxed();
                 let mut packets = vec![];
@@ -419,7 +419,8 @@ mod tests {
 
         assert!(
             stream.is_ok(),
-            format!("Could not build stream {}", stream.err().unwrap())
+            "Could not build stream {}",
+            stream.err().unwrap()
         );
     }
 
@@ -440,7 +441,8 @@ mod tests {
 
         assert!(
             stream.is_ok(),
-            format!("Could not build stream {}", stream.err().unwrap())
+            "Could not build stream {}",
+            stream.err().unwrap()
         );
     }
 
@@ -469,7 +471,7 @@ mod tests {
         let stream1 = futures::stream::iter(vec![item1]);
         let stream2 = futures::stream::iter(vec![item2]);
 
-        let result = smol::block_on(async move {
+        let result = futures::executor::block_on(async move {
             let bridge = BridgeStream::new(vec![stream1, stream2], Duration::from_millis(100), 0);
 
             let result = bridge
